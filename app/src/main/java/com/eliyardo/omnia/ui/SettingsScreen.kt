@@ -3,6 +3,9 @@ package com.eliyardo.omnia.ui
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -26,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -436,112 +440,125 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Proxy Authentication
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Require Proxy Authentication",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Require username & password to use the proxy",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Require Proxy Authentication",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Require username & password to use the proxy",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = proxyAuthEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    viewModel.settings.setProxyAuthEnabled(enabled)
+                                    if (!enabled && allowLan) {
+                                        viewModel.settings.setAllowLan(false)
+                                        viewModel.settings.setBindAddress("127.0.0.1")
+                                    }
+                                }
+                            }
                         )
                     }
-                    Switch(
-                        checked = proxyAuthEnabled,
-                        onCheckedChange = { enabled ->
-                            scope.launch {
-                                viewModel.settings.setProxyAuthEnabled(enabled)
-                                if (!enabled && allowLan) {
-                                    viewModel.settings.setAllowLan(false)
-                                    viewModel.settings.setBindAddress("127.0.0.1")
-                                }
-                            }
-                        }
-                    )
-                }
 
-                AnimatedVisibility(
-                    visible = proxyAuthEnabled,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    AnimatedVisibility(
+                        visible = proxyAuthEnabled,
+                        enter = fadeIn(animationSpec = tween(200)) + expandVertically(
+                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                            expandFrom = Alignment.Top
+                        ),
+                        exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(
+                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                            shrinkTowards = Alignment.Top
+                        )
                     ) {
-                        OutlinedTextField(
-                            value = proxyUserText,
-                            onValueChange = { v ->
-                                proxyUserText = v
-                                scope.launch {
-                                    viewModel.settings.setProxyUsername(v)
-                                }
-                            },
-                            label = { Text("Proxy Username") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clipToBounds()
+                                .padding(top = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = proxyUserText,
+                                onValueChange = { v ->
+                                    proxyUserText = v
+                                    scope.launch {
+                                        viewModel.settings.setProxyUsername(v)
+                                    }
+                                },
+                                label = { Text("Proxy Username") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            )
 
-                        OutlinedTextField(
-                            value = proxyPassText,
-                            onValueChange = { v ->
-                                proxyPassText = v
-                                scope.launch {
-                                    viewModel.settings.setProxyPassword(v)
-                                }
-                            },
-                            label = { Text("Proxy Password") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
+                            OutlinedTextField(
+                                value = proxyPassText,
+                                onValueChange = { v ->
+                                    proxyPassText = v
+                                    scope.launch {
+                                        viewModel.settings.setProxyPassword(v)
+                                    }
+                                },
+                                label = { Text("Proxy Password") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            )
 
-                        if (proxyUserText.isBlank() || proxyPassText.isBlank()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Enter both username and password to enforce authentication.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Proxy authentication is active and enforced.",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                            if (proxyUserText.isBlank() || proxyPassText.isBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Enter both username and password to enforce authentication.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Proxy authentication is active and enforced.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
@@ -550,159 +567,172 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 // Upstream HTTP Proxy
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Upstream HTTP Proxy",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "Route VPN tunnel connection through an upstream HTTP proxy",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Upstream HTTP Proxy",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Route VPN tunnel connection through an upstream HTTP proxy",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = upstreamProxyEnabled,
+                            onCheckedChange = { enabled ->
+                                scope.launch {
+                                    viewModel.settings.setUpstreamProxy(
+                                        enabled = enabled,
+                                        host = upstreamHostText,
+                                        port = upstreamPortText.toIntOrNull() ?: 8080,
+                                        username = upstreamUserText,
+                                        password = upstreamPassText
+                                    )
+                                }
+                            }
                         )
                     }
-                    Switch(
-                        checked = upstreamProxyEnabled,
-                        onCheckedChange = { enabled ->
-                            scope.launch {
-                                viewModel.settings.setUpstreamProxy(
-                                    enabled = enabled,
-                                    host = upstreamHostText,
-                                    port = upstreamPortText.toIntOrNull() ?: 8080,
-                                    username = upstreamUserText,
-                                    password = upstreamPassText
-                                )
-                            }
-                        }
-                    )
-                }
 
-                AnimatedVisibility(
-                    visible = upstreamProxyEnabled,
-                    enter = fadeIn() + expandVertically(),
-                    exit = fadeOut() + shrinkVertically()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    AnimatedVisibility(
+                        visible = upstreamProxyEnabled,
+                        enter = fadeIn(animationSpec = tween(200)) + expandVertically(
+                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                            expandFrom = Alignment.Top
+                        ),
+                        exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(
+                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                            shrinkTowards = Alignment.Top
+                        )
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clipToBounds()
+                                .padding(top = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            OutlinedTextField(
-                                value = upstreamHostText,
-                                onValueChange = { v ->
-                                    upstreamHostText = v
-                                    scope.launch {
-                                        viewModel.settings.setUpstreamProxy(
-                                            enabled = upstreamProxyEnabled,
-                                            host = v
-                                        )
-                                    }
-                                },
-                                label = { Text("Proxy Host / IP") },
-                                placeholder = { Text("192.168.1.100") },
-                                singleLine = true,
-                                modifier = Modifier.weight(2f),
-                                shape = RoundedCornerShape(10.dp)
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = upstreamHostText,
+                                    onValueChange = { v ->
+                                        upstreamHostText = v
+                                        scope.launch {
+                                            viewModel.settings.setUpstreamProxy(
+                                                enabled = upstreamProxyEnabled,
+                                                host = v
+                                            )
+                                        }
+                                    },
+                                    label = { Text("Proxy Host / IP") },
+                                    placeholder = { Text("192.168.1.100") },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(2f),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
 
-                            OutlinedTextField(
-                                value = upstreamPortText,
-                                onValueChange = { v ->
-                                    upstreamPortText = v
-                                    v.toIntOrNull()?.let { p ->
-                                        if (p in 1..65535) {
-                                            scope.launch {
-                                                viewModel.settings.setUpstreamProxy(
-                                                    enabled = upstreamProxyEnabled,
-                                                    port = p
-                                                )
+                                OutlinedTextField(
+                                    value = upstreamPortText,
+                                    onValueChange = { v ->
+                                        upstreamPortText = v
+                                        v.toIntOrNull()?.let { p ->
+                                            if (p in 1..65535) {
+                                                scope.launch {
+                                                    viewModel.settings.setUpstreamProxy(
+                                                        enabled = upstreamProxyEnabled,
+                                                        port = p
+                                                    )
+                                                }
                                             }
                                         }
-                                    }
-                                },
-                                label = { Text("Port") },
-                                placeholder = { Text("8080") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                        }
-
-                        OutlinedTextField(
-                            value = upstreamUserText,
-                            onValueChange = { v ->
-                                upstreamUserText = v
-                                scope.launch {
-                                    viewModel.settings.setUpstreamProxy(
-                                        enabled = upstreamProxyEnabled,
-                                        username = v
-                                    )
-                                }
-                            },
-                            label = { Text("Username (Optional)") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-
-                        OutlinedTextField(
-                            value = upstreamPassText,
-                            onValueChange = { v ->
-                                upstreamPassText = v
-                                scope.launch {
-                                    viewModel.settings.setUpstreamProxy(
-                                        enabled = upstreamProxyEnabled,
-                                        password = v
-                                    )
-                                }
-                            },
-                            label = { Text("Password (Optional)") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Allow Cleartext Authentication",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Permits HTTP Basic authentication headers",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    label = { Text("Port") },
+                                    placeholder = { Text("8080") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(10.dp)
                                 )
                             }
-                            Switch(
-                                checked = upstreamProxyAllowCleartext,
-                                onCheckedChange = { allowed ->
+
+                            OutlinedTextField(
+                                value = upstreamUserText,
+                                onValueChange = { v ->
+                                    upstreamUserText = v
                                     scope.launch {
                                         viewModel.settings.setUpstreamProxy(
                                             enabled = upstreamProxyEnabled,
-                                            allowCleartext = allowed
+                                            username = v
                                         )
                                     }
-                                }
+                                },
+                                label = { Text("Username (Optional)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
                             )
+
+                            OutlinedTextField(
+                                value = upstreamPassText,
+                                onValueChange = { v ->
+                                    upstreamPassText = v
+                                    scope.launch {
+                                        viewModel.settings.setUpstreamProxy(
+                                            enabled = upstreamProxyEnabled,
+                                            password = v
+                                        )
+                                    }
+                                },
+                                label = { Text("Password (Optional)") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Allow Cleartext Authentication",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "Permits HTTP Basic authentication headers",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = upstreamProxyAllowCleartext,
+                                    onCheckedChange = { allowed ->
+                                        scope.launch {
+                                            viewModel.settings.setUpstreamProxy(
+                                                enabled = upstreamProxyEnabled,
+                                                allowCleartext = allowed
+                                            )
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -986,45 +1016,72 @@ fun SettingsScreen(
                 )
 
                 val timeoutOptions = listOf(
-                    Pair(AppSettings.TIMEOUT_10S, "10s"),
-                    Pair(AppSettings.TIMEOUT_30S, "30s"),
-                    Pair(AppSettings.TIMEOUT_1M, "1m (Default)"),
-                    Pair(AppSettings.TIMEOUT_2M, "2m"),
-                    Pair(AppSettings.TIMEOUT_CONTINUOUS, "Continuous")
+                    Triple(
+                        AppSettings.TIMEOUT_10S,
+                        "10 Seconds",
+                        "Fail fast on unreachable or offline server endpoints"
+                    ),
+                    Triple(
+                        AppSettings.TIMEOUT_30S,
+                        "30 Seconds",
+                        "Balanced timeout for mobile cellular networks"
+                    ),
+                    Triple(
+                        AppSettings.TIMEOUT_1M,
+                        "1 Minute (Default)",
+                        "Recommended standard OpenVPN handshake timeout"
+                    ),
+                    Triple(
+                        AppSettings.TIMEOUT_2M,
+                        "2 Minutes",
+                        "Extended timeout for slow, congested, or high-latency links"
+                    ),
+                    Triple(
+                        AppSettings.TIMEOUT_CONTINUOUS,
+                        "Continuous Retry",
+                        "Never time out; keep attempting to connect indefinitely"
+                    )
                 )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    timeoutOptions.forEach { (sec, label) ->
-                        val isSelected = connectionTimeout == sec
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    timeoutOptions.forEach { (sec, title, desc) ->
+                        val selected = connectionTimeout == sec
                         Surface(
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
                                 .clickable {
                                     scope.launch { viewModel.settings.setConnectionTimeout(sec) }
                                 },
                             shape = RoundedCornerShape(8.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
-                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null
+                            color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+                            border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null
                         ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
+                                RadioButton(
+                                    selected = selected,
+                                    onClick = { scope.launch { viewModel.settings.setConnectionTimeout(sec) } },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = MaterialTheme.colorScheme.onSurface
+                                    )
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }
