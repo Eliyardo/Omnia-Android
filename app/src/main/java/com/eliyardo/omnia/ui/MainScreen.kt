@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -548,21 +550,31 @@ fun HeroPowerButton(
     val isConnecting = tunnelState is TunnelState.Connecting || tunnelState is TunnelState.Reconnecting
     val isError = tunnelState is TunnelState.Error
 
-    var isDisconnectingAnim by remember { mutableStateOf(false) }
-    var wasConnected by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
 
-    LaunchedEffect(isConnected) {
-        if (!isConnected && wasConnected) {
-            isDisconnectingAnim = true
-            delay(500)
-            isDisconnectingAnim = false
+    var isDisconnectingUser by remember { mutableStateOf(false) }
+
+    // When connection status transitions to Disconnected or Error, clear disconnecting flag
+    LaunchedEffect(tunnelState) {
+        if (tunnelState is TunnelState.Disconnected || tunnelState is TunnelState.Error) {
+            isDisconnectingUser = false
         }
-        wasConnected = isConnected
     }
 
-    // Border color animation
+    // Auto-timeout guard for disconnecting animation if teardown takes longer than 3.5 seconds
+    LaunchedEffect(isDisconnectingUser) {
+        if (isDisconnectingUser) {
+            delay(3500)
+            isDisconnectingUser = false
+        }
+    }
+
+    val isDisconnecting = isDisconnectingUser
+
+    // Border and theme color transitions
     val targetBorderColor = when {
-        isDisconnectingAnim -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
+        isDisconnecting -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.7f)
         isConnected -> StatusConnectedGreen
         isError -> MaterialTheme.colorScheme.error
         isConnecting -> MaterialTheme.colorScheme.tertiary
@@ -571,7 +583,7 @@ fun HeroPowerButton(
 
     val borderColor by animateColorAsState(
         targetValue = targetBorderColor,
-        animationSpec = tween(450, easing = FastOutSlowInEasing),
+        animationSpec = tween(350, easing = FastOutSlowInEasing),
         label = "borderColor"
     )
 
@@ -581,54 +593,66 @@ fun HeroPowerButton(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = LinearEasing),
+            animation = tween(if (isDisconnecting) 900 else 1600, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "spinRotation"
     )
 
-    // Sweep angle of the two perimeter arcs:
-    // Connecting: 100° arcs with two 80° gaps
-    // Disconnecting: 45° arcs (quick unravelling)
-    // Connected or Idle: 180° (arcs meet and form full circle)
+    // Sweep angle of perimeter arcs:
+    // Disconnecting: 35° (quick, stylish unravelling)
+    // Connecting: 95° (two balanced arcs with 85° gaps)
+    // Connected or Idle: 180° (arcs meet and form seamless solid perimeter)
     val targetSweep = when {
-        isDisconnectingAnim -> 45f
-        isConnecting -> 100f
+        isDisconnecting -> 35f
+        isConnecting -> 95f
         else -> 180f
     }
 
     val arcSweep by animateFloatAsState(
         targetValue = targetSweep,
         animationSpec = tween(
-            durationMillis = if (isDisconnectingAnim) 250 else 450,
+            durationMillis = if (isDisconnecting) 200 else 400,
             easing = FastOutSlowInEasing
         ),
         label = "arcSweep"
     )
 
-    // Pulse wave on connect
+    // Subtle ambient breathing glow when connected
+    val ambientGlowTransition = rememberInfiniteTransition(label = "ambientGlow")
+    val ambientGlowAlpha by ambientGlowTransition.animateFloat(
+        initialValue = 0.05f,
+        targetValue = 0.16f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ambientGlowAlpha"
+    )
+
+    // Pulse wave ring on connect
     val connectPulseTransition = remember(isConnected) { Animatable(0f) }
     LaunchedEffect(isConnected) {
         if (isConnected) {
             connectPulseTransition.snapTo(0f)
             connectPulseTransition.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(700, easing = FastOutSlowInEasing)
+                animationSpec = tween(650, easing = FastOutSlowInEasing)
             )
         }
     }
 
-    // Button scale bounce on state change
+    // Highly responsive button scale bounce (handles touch press + state transitions)
     val buttonScale by animateFloatAsState(
         targetValue = when {
-            isDisconnectingAnim -> 0.96f
-            isConnected -> 1.0f
+            isPressed -> 0.93f
+            isDisconnecting -> 0.95f
             isConnecting -> 0.98f
             else -> 1.0f
         },
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessLow
+            stiffness = Spring.StiffnessMediumLow
         ),
         label = "buttonScale"
     )
@@ -641,15 +665,26 @@ fun HeroPowerButton(
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier = Modifier.size(buttonSize + 24.dp)
+            modifier = Modifier.size(buttonSize + 32.dp)
         ) {
+            // Ambient breathing halo when connected
+            if (isConnected && !isDisconnecting) {
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    drawCircle(
+                        color = StatusConnectedGreen.copy(alpha = ambientGlowAlpha),
+                        radius = (buttonSize.toPx() / 2f) + 10.dp.toPx() * (ambientGlowAlpha / 0.16f),
+                        center = center
+                    )
+                }
+            }
+
             // Pulse wave ring on connect
             if (connectPulseTransition.value > 0f && connectPulseTransition.value < 1f) {
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                     val progress = connectPulseTransition.value
                     val alpha = (1f - progress).coerceIn(0f, 1f) * 0.45f
                     val stroke = 3.dp.toPx() * (1f - progress * 0.5f)
-                    val radius = (size.width / 2f) - (12.dp.toPx() * (1f - progress))
+                    val radius = (buttonSize.toPx() / 2f) + (14.dp.toPx() * progress)
 
                     drawCircle(
                         color = StatusConnectedGreen.copy(alpha = alpha),
@@ -671,8 +706,12 @@ fun HeroPowerButton(
                     }
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surface)
-                    .clickable {
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null
+                    ) {
                         if (isConnected || isConnecting) {
+                            isDisconnectingUser = true
                             onDisconnect()
                         } else {
                             onConnect()
@@ -697,7 +736,8 @@ fun HeroPowerButton(
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
                     )
 
-                    val currentRotation = if (isConnecting || isDisconnectingAnim) spinRotation else 0f
+                    // Continuous rotation: spins during connecting and disconnecting, seamlessly becomes full circle when connected without angle snap
+                    val currentRotation = spinRotation
 
                     // Arc 1
                     drawArc(
@@ -731,18 +771,18 @@ fun HeroPowerButton(
                 // Inner State Text with smooth transition
                 AnimatedContent(
                     targetState = when {
-                        isDisconnectingAnim -> "DISCONNECTING"
+                        isDisconnecting -> "DISCONNECTING"
                         isConnecting -> "CONNECTING"
                         isConnected -> "CONNECTED"
                         isError -> "RETRY"
                         else -> "CONNECT"
                     },
                     transitionSpec = {
-                        (fadeIn(animationSpec = tween(220, delayMillis = 50)) +
-                                scaleIn(initialScale = 0.92f, animationSpec = tween(220, delayMillis = 50)))
+                        (fadeIn(animationSpec = tween(200, delayMillis = 40)) +
+                                scaleIn(initialScale = 0.90f, animationSpec = tween(200, delayMillis = 40)))
                             .togetherWith(
-                                fadeOut(animationSpec = tween(150)) +
-                                        scaleOut(targetScale = 1.05f, animationSpec = tween(150))
+                                fadeOut(animationSpec = tween(140)) +
+                                        scaleOut(targetScale = 1.05f, animationSpec = tween(140))
                             )
                     },
                     label = "buttonContent"
@@ -806,10 +846,10 @@ fun HeroPowerButton(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // State description badge beneath button (Clean, NO "Tunnel active")
+        // State description badge beneath button
         Text(
             text = when {
-                isDisconnectingAnim -> "Disconnecting..."
+                isDisconnecting -> "Disconnecting..."
                 isConnected -> if (isProxyMode) "Proxy listening" else "System-Wide VPN"
                 isConnecting -> if (tunnelState is TunnelState.Reconnecting) "Reconnecting..." else "Connecting..."
                 isError -> "Connection failed"

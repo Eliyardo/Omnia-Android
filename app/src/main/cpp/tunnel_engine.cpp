@@ -482,7 +482,9 @@ void TunnelEngine::statsLoop() {
     pthread_setname_np(pthread_self(), "ovpn-stats");
     LOGI("Stats monitoring loop started");
     while (running.load()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        for (int i = 0; i < 20 && running.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
         if (!running.load()) break;
 
         long long in = 0, out = 0;
