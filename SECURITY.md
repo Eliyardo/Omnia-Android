@@ -21,6 +21,6 @@ Alternatively, contact the project maintainer directly via GitHub profile contac
 
 ### What to Expect
 
-- **Acknowledgment:** Within 48 hours of your report.
+- **Acknowledgment:** Within 1 week of your report.
 - **Assessment:** We will verify the vulnerability and coordinate on remediation.
 - **Disclosure:** We adhere to coordinated vulnerability disclosure. We ask that you give us reasonable time to release a patch before disclosing publicly.
