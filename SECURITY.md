@@ -1,13 +1,6 @@
 # Security Policy
 
-## Supported Versions
-
-Only the latest release of Omnia receives active security updates and vulnerability patches.
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
-| < 1.0   | :x:                |
+Only the latest release of Omnia receives active security updates and vulnerability patches. Users are advised to always run the most recent release.
 
 ## Reporting a Vulnerability
 
