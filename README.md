@@ -1,6 +1,6 @@
 # Omnia
 
-An OpenVPN client for Android featuring userspace proxy isolation and system-wide VPN tunneling.
+An OpenVPN client for Android featuring userspace proxy and system-wide VPN tunneling.
 
 ---
 
