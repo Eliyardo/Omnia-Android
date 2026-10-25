@@ -1,4 +1,4 @@
-﻿/*
+/*
  * tunnel_jni.cpp - JNI Bridge for TunnelEngine
  */
 
@@ -92,6 +92,15 @@ Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeSendData(
     int res = engine->sendData(conn_id, reinterpret_cast<const uint8_t*>(bytes), offset, length);
     env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
     return res;
+}
+
+JNIEXPORT void JNICALL
+Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeAcknowledgeData(
+        JNIEnv* /*env*/, jobject /*thiz*/, jlong handle, jint conn_id, jint length) {
+    auto* engine = reinterpret_cast<TunnelEngine*>(handle);
+    if (engine) {
+        engine->acknowledgeData(conn_id, length);
+    }
 }
 
 JNIEXPORT void JNICALL

@@ -234,6 +234,11 @@ class TunnelEngine {
         }
     }
 
+    fun acknowledgeData(connId: Int, length: Int) {
+        if (nativeHandle == 0L || length <= 0) return
+        nativeAcknowledgeData(nativeHandle, connId, length)
+    }
+
     var onProtectSocketCallback: ((socket: Int) -> Boolean)? = null
     var onEstablishVpnCallback: ((
         ip: String,
@@ -242,7 +247,10 @@ class TunnelEngine {
         ipv6Prefix: Int,
         mtu: Int,
         dns: Array<String>,
-        routes: Array<String>
+        routes: Array<String>,
+        rerouteGwIpv4: Boolean,
+        rerouteGwIpv6: Boolean,
+        excludedRoutes: Array<String>
     ) -> Int)? = null
 
     @androidx.annotation.Keep
@@ -258,9 +266,15 @@ class TunnelEngine {
         ipv6Prefix: Int,
         mtu: Int,
         dns: Array<String>,
-        routes: Array<String>
+        routes: Array<String>,
+        rerouteGwIpv4: Boolean,
+        rerouteGwIpv6: Boolean,
+        excludedRoutes: Array<String>
     ): Int {
-        return onEstablishVpnCallback?.invoke(ip, prefix, ipv6, ipv6Prefix, mtu, dns, routes) ?: -1
+        return onEstablishVpnCallback?.invoke(
+            ip, prefix, ipv6, ipv6Prefix, mtu, dns, routes,
+            rerouteGwIpv4, rerouteGwIpv6, excludedRoutes
+        ) ?: -1
     }
     
     fun setCustomDns(dns1: String?, dns2: String?) {
@@ -286,6 +300,7 @@ class TunnelEngine {
     private external fun nativeSetCustomDns(handle: Long, dns1: String, dns2: String)
     private external fun nativeOpenConnection(handle: Long, host: String, port: Int, callbackId: Long): Int
     private external fun nativeSendData(handle: Long, connId: Int, data: ByteArray, offset: Int, length: Int): Int
+    private external fun nativeAcknowledgeData(handle: Long, connId: Int, length: Int)
     private external fun nativeCloseConnection(handle: Long, connId: Int)
     private external fun nativeOpenUdpConnection(handle: Long, callbackId: Long): Int
     private external fun nativeSendUdpData(handle: Long, connId: Int, host: String, port: Int, data: ByteArray, offset: Int, length: Int): Int

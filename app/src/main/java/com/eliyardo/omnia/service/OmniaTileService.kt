@@ -99,6 +99,7 @@ class OmniaTileService : TileService() {
             val (active, isTun, content) = withContext(Dispatchers.IO) {
                 val profileManager = ProfileManager(applicationContext)
                 val settings = AppSettings(applicationContext)
+                profileManager.awaitLoaded()
                 val active = profileManager.activeProfile.value
                 val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
                 val content = active?.let { profileManager.getProfileContent(it.id) }

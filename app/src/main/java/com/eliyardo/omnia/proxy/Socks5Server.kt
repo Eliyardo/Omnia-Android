@@ -49,13 +49,17 @@ class Socks5Server(
         
         private const val BUFFER_SIZE = 32768
         private const val CONNECT_TIMEOUT_MS = 30000
+        private const val PRE_AUTH_TIMEOUT_MS = 5000
         private const val MAX_CONCURRENT_CONNECTIONS = 64
+        private const val CHANNEL_CAPACITY = 32
     }
     
     private var serverSocket: ServerSocket? = null
     private val running = AtomicBoolean(false)
     private val activeConnections = AtomicInteger(0)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val proxyExecutor = java.util.concurrent.Executors.newFixedThreadPool(MAX_CONCURRENT_CONNECTIONS)
+    private val proxyDispatcher = proxyExecutor.asCoroutineDispatcher()
+    private val scope = CoroutineScope(proxyDispatcher + SupervisorJob())
     
     val isRunning: Boolean get() = running.get()
     val connectionCount: Int get() = activeConnections.get()
@@ -90,13 +94,14 @@ class Socks5Server(
         }
         serverSocket = null
         scope.cancel()
+        proxyExecutor.shutdown()
         Log.i(TAG, "SOCKS5 server stopped")
     }
     
     private suspend fun acceptLoop(ss: ServerSocket) {
         while (running.get()) {
             try {
-                val clientSocket = withContext(Dispatchers.IO) { ss.accept() }
+                val clientSocket = withContext(proxyDispatcher) { ss.accept() }
                 if (activeConnections.get() >= MAX_CONCURRENT_CONNECTIONS) {
                     try {
                         val out = clientSocket.getOutputStream()
@@ -128,8 +133,9 @@ class Socks5Server(
         }
     }
     
-    private suspend fun handleClient(clientSocket: Socket) = withContext(Dispatchers.IO) {
-        clientSocket.soTimeout = CONNECT_TIMEOUT_MS
+    private suspend fun handleClient(clientSocket: Socket) = withContext(proxyDispatcher) {
+        // Enforce short pre-authentication timeout to prevent slot exhaustion
+        clientSocket.soTimeout = PRE_AUTH_TIMEOUT_MS
         val input = clientSocket.getInputStream()
         val output = clientSocket.getOutputStream()
         
@@ -299,7 +305,7 @@ class Socks5Server(
         
         // Create tunnel connection through the OpenVPN tunnel via lwIP
         val completableDeferred = CompletableDeferred<Boolean>()
-        val dataChannel = Channel<ByteArray>(Channel.UNLIMITED)
+        val dataChannel = Channel<ByteArray>(CHANNEL_CAPACITY)
         val connectionClosed = AtomicBoolean(false)
         
         val callback = object : TunnelEngine.TunnelConnectionCallback {
@@ -360,13 +366,17 @@ class Socks5Server(
         try {
             coroutineScope {
                 // Client -> Tunnel
-                val clientToTunnel = launch(Dispatchers.IO) {
+                val clientToTunnel = launch(proxyDispatcher) {
                     try {
                         val buffer = ByteArray(BUFFER_SIZE)
                         while (!connectionClosed.get() && running.get()) {
                             val read = clientInput.read(buffer)
                             if (read <= 0) break
-                            tunnelEngine.sendData(connId, buffer, 0, read)
+                            val sent = tunnelEngine.sendData(connId, buffer, 0, read)
+                            if (sent < 0) {
+                                Log.w(TAG, "sendData failed / buffer overflow; closing conn $connId")
+                                break
+                            }
                         }
                     } catch (e: IOException) {
                         // Client disconnected
@@ -376,11 +386,12 @@ class Socks5Server(
                 }
                 
                 // Tunnel -> Client
-                val tunnelToClient = launch(Dispatchers.IO) {
+                val tunnelToClient = launch(proxyDispatcher) {
                     try {
                         for (data in dataChannel) {
                             clientOutput.write(data)
                             clientOutput.flush()
+                            tunnelEngine.acknowledgeData(connId, data.size)
                         }
                     } catch (e: IOException) {
                         // Client disconnected

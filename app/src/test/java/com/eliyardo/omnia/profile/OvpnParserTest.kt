@@ -1,4 +1,4 @@
-﻿package com.eliyardo.omnia.profile
+package com.eliyardo.omnia.profile
 
 import org.junit.Assert.*
 import org.junit.Before
@@ -238,5 +238,41 @@ class OvpnParserTest {
         assertEquals("sampleUser123", profile.inlineUsername)
         assertEquals("samplePassword456", profile.inlinePassword)
         assertTrue("Profile is valid", profile.isValid)
+    }
+
+    @Test
+    fun testExternalCaFileFailsWithHelpfulError() {
+        val ovpnWithExternalCa = """
+            client
+            dev tun
+            proto udp
+            remote vpn.example.com 1194
+            ca ca.crt
+        """.trimIndent()
+
+        val result = parser.parse(ovpnWithExternalCa, "external.ovpn")
+        assertNull("Profile with external CA should fail validation", result.profile)
+        assertTrue("Should explain that external CA files are not accessible on Android",
+            result.errors.any { it.contains("external CA file") && it.contains("inline") })
+    }
+
+    @Test
+    fun testMissingRemoteCertTlsTriggersWarning() {
+        val ovpnWithoutCertCheck = """
+            client
+            dev tun
+            proto udp
+            remote vpn.example.com 1194
+            <ca>
+            -----BEGIN CERTIFICATE-----
+            MIIB...
+            -----END CERTIFICATE-----
+            </ca>
+        """.trimIndent()
+
+        val result = parser.parse(ovpnWithoutCertCheck, "no-check.ovpn")
+        assertNotNull(result.profile)
+        assertTrue("Should warn about missing remote-cert-tls or verify-x509-name",
+            result.warnings.any { it.contains("remote-cert-tls") || it.contains("verify-x509-name") })
     }
 }

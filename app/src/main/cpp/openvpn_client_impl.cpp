@@ -26,6 +26,10 @@ bool OpenVpnClientImpl::tun_builder_new() {
     m_gateway.clear();
     m_dnsServers.clear();
     m_routes.clear();
+    m_excludedRoutes.clear();
+    m_rerouteGwIpv4 = false;
+    m_rerouteGwIpv6 = false;
+    m_rerouteGwFlags = 0;
     m_prefixLength = 24;
     m_prefixLengthIpv6 = 0;
     m_mtu = 1500;
@@ -63,6 +67,9 @@ bool OpenVpnClientImpl::tun_builder_set_route_metric_default(int metric) {
 
 bool OpenVpnClientImpl::tun_builder_reroute_gw(bool ipv4, bool ipv6, unsigned int flags) {
     LOGD("tun_builder_reroute_gw: ipv4=%d ipv6=%d flags=0x%x", ipv4, ipv6, flags);
+    m_rerouteGwIpv4 = ipv4;
+    m_rerouteGwIpv6 = ipv6;
+    m_rerouteGwFlags = flags;
     return true;
 }
 
@@ -75,6 +82,8 @@ bool OpenVpnClientImpl::tun_builder_add_route(const std::string& address, int pr
 
 bool OpenVpnClientImpl::tun_builder_exclude_route(const std::string& address, int prefix_length,
                                                  int metric, bool ipv6) {
+    LOGD("tun_builder_exclude_route: %s/%d metric=%d ipv6=%d", address.c_str(), prefix_length, metric, ipv6);
+    m_excludedRoutes.push_back(address + "/" + std::to_string(prefix_length));
     return true;
 }
 
@@ -149,9 +158,11 @@ int OpenVpnClientImpl::tun_builder_establish() {
             int vpnFd = m_engine->callbacks.establishVpn(
                 m_assignedIp, m_prefixLength,
                 m_assignedIpv6, m_prefixLengthIpv6,
-                m_mtu, m_dnsServers, m_routes
+                m_mtu, m_dnsServers, m_routes,
+                m_rerouteGwIpv4, m_rerouteGwIpv6, m_excludedRoutes
             );
-            LOGI("tun_builder_establish [TUN Mode]: Received vpnFd=%d", vpnFd);
+            LOGI("tun_builder_establish [TUN Mode]: Received vpnFd=%d (rerouteIpv4=%d, rerouteIpv6=%d, routes=%zu, excluded=%zu)",
+                 vpnFd, m_rerouteGwIpv4 ? 1 : 0, m_rerouteGwIpv6 ? 1 : 0, m_routes.size(), m_excludedRoutes.size());
             return vpnFd;
         }
         return -1;
@@ -186,7 +197,8 @@ void OpenVpnClientImpl::event(const openvpn::ClientAPI::Event& ev) {
 
     if (ev.name == "CONNECTED") {
         m_engine->callbacks.stateChanged(2, "Connected");
-    } else if (ev.name == "RECONNECTING") {
+    } else if (ev.name == "RECONNECTING" || ev.name == "CLIENT_RESTART") {
+        // Non-fatal reconnecting events: mapped to state 3 (Reconnecting)
         m_engine->callbacks.stateChanged(3, "Reconnecting: " + ev.info);
     } else if (ev.name == "DISCONNECTED") {
         m_engine->callbacks.stateChanged(0, "Disconnected");
@@ -201,7 +213,17 @@ void OpenVpnClientImpl::event(const openvpn::ClientAPI::Event& ev) {
     } else if (ev.name == "ASSIGN_IP") {
         m_engine->callbacks.stateChanged(1, "Assigning IP address...");
     } else if (ev.error) {
-        m_engine->callbacks.stateChanged(4, (ev.fatal ? "FATAL: " : "ERROR: ") + ev.name + ": " + ev.info);
+        // OpenVPN 3 Core classifies non-fatal errors (TRANSPORT_ERROR, TUN_ERROR) as recoverable,
+        // triggering automatic reconnection within the core.
+        // Only fatal events (ev.fatal == true, AUTH_FAILED, CERT_VERIFY_FAIL) should tear down the session (State 4 Error).
+        if (ev.fatal || ev.name == "AUTH_FAILED" || ev.name == "CERT_VERIFY_FAIL") {
+            m_engine->callbacks.stateChanged(4, "FATAL: " + ev.name + ": " + ev.info);
+        } else if (ev.name == "TRANSPORT_ERROR" || ev.name == "TUN_ERROR") {
+            LOGI("[OpenVPN3] Non-fatal error %s, signaling state 3 Reconnecting to allow core automatic recovery", ev.name.c_str());
+            m_engine->callbacks.stateChanged(3, "Reconnecting (" + ev.name + "): " + ev.info);
+        } else {
+            m_engine->callbacks.stateChanged(4, "ERROR: " + ev.name + ": " + ev.info);
+        }
     }
 }
 

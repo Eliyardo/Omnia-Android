@@ -52,7 +52,10 @@ struct TunnelCallbacks {
                      const std::string& ipv6, int prefixIpv6,
                      int mtu,
                      const std::vector<std::string>& dns,
-                     const std::vector<std::string>& routes);
+                     const std::vector<std::string>& routes,
+                     bool rerouteGwIpv4,
+                     bool rerouteGwIpv6,
+                     const std::vector<std::string>& excludedRoutes);
 };
 
 /*
@@ -100,6 +103,7 @@ public:
 
     int openConnection(const std::string& host, int port, long callbackId);
     int sendData(int connId, const uint8_t* data, int offset, int length);
+    void acknowledgeData(int connId, int length);
     void closeConnection(int connId);
 
     int openUdpConnection(long callbackId);

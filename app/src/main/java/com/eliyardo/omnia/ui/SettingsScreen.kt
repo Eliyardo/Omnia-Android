@@ -74,8 +74,11 @@ fun SettingsScreen(
     val allowLan by viewModel.settings.allowLan.collectAsState(initial = false)
     val ipv6Enabled by viewModel.settings.ipv6Enabled.collectAsState(initial = true)
     val legacyCrypto by viewModel.settings.legacyCrypto.collectAsState(initial = false)
+    val blockTrafficOnDrop by viewModel.settings.blockTrafficOnDrop.collectAsState(initial = true)
     val isSplitEnabled by viewModel.settings.splitTunnelEnabled.collectAsState(initial = false)
     val selectedApps by viewModel.settings.splitTunnelApps.collectAsState(initial = emptySet())
+
+    var showLanAuthDialog by remember { mutableStateOf(false) }
 
     var socks5PortText by remember(socks5Port) { mutableStateOf(socks5Port.toString()) }
     var httpPortText by remember(httpPort) { mutableStateOf(httpPort.toString()) }
@@ -556,9 +559,20 @@ fun SettingsScreen(
                     Switch(
                         checked = allowLan,
                         onCheckedChange = { enabled ->
-                            scope.launch {
-                                viewModel.settings.setAllowLan(enabled)
-                                viewModel.settings.setBindAddress(if (enabled) "0.0.0.0" else "127.0.0.1")
+                            if (enabled) {
+                                if (proxyUsername.isBlank() || proxyPassword.isBlank()) {
+                                    showLanAuthDialog = true
+                                } else {
+                                    scope.launch {
+                                        viewModel.settings.setAllowLan(true)
+                                        viewModel.settings.setBindAddress("0.0.0.0")
+                                    }
+                                }
+                            } else {
+                                scope.launch {
+                                    viewModel.settings.setAllowLan(false)
+                                    viewModel.settings.setBindAddress("127.0.0.1")
+                                }
                             }
                         }
                     )
@@ -566,21 +580,21 @@ fun SettingsScreen(
 
                 if (allowLan) {
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                Icons.Default.Warning,
+                                Icons.Default.Shield,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onErrorContainer,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Security Warning: Anyone on your Wi-Fi can connect. Please enable Proxy Authentication.",
+                                text = "LAN sharing active: Bound to 0.0.0.0 with mandatory proxy credentials authentication.",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                         }
                     }
@@ -688,6 +702,33 @@ fun SettingsScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp)
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Block Traffic on Drop (Kill Switch)",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Keeps virtual network active when VPN disconnects unexpectedly to prevent unencrypted traffic leaks",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = blockTrafficOnDrop,
+                        onCheckedChange = { enabled ->
+                            scope.launch { viewModel.settings.setBlockTrafficOnDrop(enabled) }
+                        }
                     )
                 }
             }
@@ -807,6 +848,22 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+
+    if (showLanAuthDialog) {
+        AlertDialog(
+            onDismissRequest = { showLanAuthDialog = false },
+            icon = { Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+            title = { Text("Proxy Authentication Required") },
+            text = {
+                Text("Allowing LAN access exposes your proxy ports to other devices on the local Wi-Fi network. For security, you must set a proxy username and password in the Proxy Configuration section above before enabling LAN access.")
+            },
+            confirmButton = {
+                Button(onClick = { showLanAuthDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
     }
 }
 

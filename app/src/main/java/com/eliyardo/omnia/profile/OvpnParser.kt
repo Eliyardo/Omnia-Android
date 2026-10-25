@@ -1,4 +1,4 @@
-﻿package com.eliyardo.omnia.profile
+package com.eliyardo.omnia.profile
 
 class OvpnParser {
 
@@ -53,8 +53,11 @@ class OvpnParser {
         var hasKey = false
         var hasTlsAuth = false
         var hasTlsCrypt = false
+        var hasRemoteCertTls = false
+        var hasVerifyX509Name = false
         var inInlineBlock = false
         var currentInlineTag = ""
+        val caContentBuilder = StringBuilder()
 
         for (line in lines) {
             val trimmed = line.trim()
@@ -69,7 +72,10 @@ class OvpnParser {
                     inInlineBlock = true
                     currentInlineTag = tag
                     when (tag) {
-                        "ca" -> hasCa = true
+                        "ca" -> {
+                            hasCa = true
+                            caContentBuilder.clear()
+                        }
                         "cert" -> hasCert = true
                         "key" -> hasKey = true
                         "tls-auth" -> hasTlsAuth = true
@@ -98,6 +104,8 @@ class OvpnParser {
             if (inInlineBlock) {
                 if (currentInlineTag == "auth-user-pass" && trimmed.isNotEmpty()) {
                     inlineAuthLines.add(trimmed)
+                } else if (currentInlineTag == "ca" && trimmed.isNotEmpty()) {
+                    caContentBuilder.append(trimmed).append("\n")
                 }
                 continue
             }
@@ -126,8 +134,9 @@ class OvpnParser {
                 }
                 "ca" -> {
                     if (parts.size >= 2) {
-                        hasCa = true
-                        warnings.add("Referenced CA file '${parts[1]}' - must be included inline")
+                        if (!hasCa) {
+                            errors.add("Referenced external CA file '${parts[1]}' cannot be read on Android; CA certificate must be embedded inline using <ca>...</ca>")
+                        }
                     }
                 }
                 "cert" -> {
@@ -160,8 +169,8 @@ class OvpnParser {
                 "resolv-retry" -> { /* handled by engine */ }
                 "nobind" -> { /* expected */ }
                 "persist-key", "persist-tun" -> { /* noted */ }
-                "remote-cert-tls" -> { /* security-critical, passed through */ }
-                "verify-x509-name" -> { /* security-critical, passed through */ }
+                "remote-cert-tls" -> { hasRemoteCertTls = true }
+                "verify-x509-name" -> { hasVerifyX509Name = true }
                 "cipher", "data-ciphers", "data-ciphers-fallback", "ncp-ciphers", "auth" -> { /* passed through */ }
                 "compress", "comp-lzo" -> {
                     warnings.add("Compression ($directive) is supported but may have security implications (VORACLE)")
@@ -197,9 +206,17 @@ class OvpnParser {
             errors.add("No CA certificate found - server certificate cannot be verified")
         }
 
+        if (!hasRemoteCertTls && !hasVerifyX509Name) {
+            warnings.add("Profile does not specify 'remote-cert-tls server' or 'verify-x509-name'; MITM verification is weakened")
+        }
+
         if (!protocol.startsWith("udp") && !protocol.startsWith("tcp")) {
             errors.add("Unsupported protocol: $protocol")
         }
+
+        val caFingerprint = if (hasCa && caContentBuilder.isNotEmpty()) {
+            computeCaFingerprint(caContentBuilder.toString())
+        } else null
 
         val profileName = fileName
             .removeSuffix(".ovpn")
@@ -222,11 +239,28 @@ class OvpnParser {
                 hasKey = hasKey,
                 hasTlsAuth = hasTlsAuth,
                 hasTlsCrypt = hasTlsCrypt,
+                caFingerprint = caFingerprint,
                 warnings = warnings,
                 errors = errors
             )
         } else null
 
         return ProfileValidationResult(profile, errors, warnings, unsupported)
+    }
+
+    private fun computeCaFingerprint(caPem: String): String? {
+        return try {
+            val clean = caPem
+                .replace("-----BEGIN CERTIFICATE-----", "")
+                .replace("-----END CERTIFICATE-----", "")
+                .replace("\\s+".toRegex(), "")
+            if (clean.isEmpty()) return null
+            val bytes = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val digest = md.digest(bytes)
+            digest.joinToString(":") { "%02X".format(it) }
+        } catch (_: Exception) {
+            null
+        }
     }
 }

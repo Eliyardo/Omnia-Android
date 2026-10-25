@@ -170,7 +170,7 @@ fun MainScreen(viewModel: MainViewModel) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text("Profile: ${staged.fileName}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                             Text("Endpoint: ${staged.remoteHost}:${staged.remotePort} (${staged.protocol.uppercase()})", style = MaterialTheme.typography.labelSmall)
-                            Text("CA Certificate: ${if (staged.hasCa) "Embedded" else "None"}", style = MaterialTheme.typography.labelSmall)
+                            Text("CA Certificate: ${if (staged.hasCa) (staged.caFingerprint?.let { "SHA-256 $it" } ?: "Embedded") else "None"}", style = MaterialTheme.typography.labelSmall)
                             Text("Authentication: ${if (staged.hasAuth) "User/Password Required" else "Certificate-Only"}", style = MaterialTheme.typography.labelSmall)
                         }
                     }
@@ -1272,26 +1272,35 @@ fun ProfilesManagerDialog(
 
                                         Spacer(modifier = Modifier.height(2.dp))
 
-                                        Text(
-                                            text = "${profile.remoteHost}:${profile.remotePort} (${profile.protocol.uppercase()})",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                                        if (profile.isCorrupted) {
+                                            Text(
+                                                text = profile.decryptionError ?: "Decryption failed (Keystore key invalidated)",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "${profile.remoteHost}:${profile.remotePort} (${profile.protocol.uppercase()})",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
 
-                                    IconButton(
-                                        onClick = { onEdit(profile) },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Edit,
-                                            contentDescription = "Edit Profile",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(20.dp)
-                                        )
+                                    if (!profile.isCorrupted) {
+                                        IconButton(
+                                            onClick = { onEdit(profile) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = "Edit Profile",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
                                     }
-
-                                    Spacer(modifier = Modifier.width(4.dp))
 
                                     // Independent Delete Button with explicit prompt
                                     IconButton(

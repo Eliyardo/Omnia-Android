@@ -167,7 +167,10 @@ int TunnelCallbacks::establishVpn(const std::string& ip, int prefix,
                                  const std::string& ipv6, int prefixIpv6,
                                  int mtu,
                                  const std::vector<std::string>& dns,
-                                 const std::vector<std::string>& routes) {
+                                 const std::vector<std::string>& routes,
+                                 bool rerouteGwIpv4,
+                                 bool rerouteGwIpv6,
+                                 const std::vector<std::string>& excludedRoutes) {
     JNIEnv* env = getEnv();
     if (!env || !engineObj || !onEstablishVpn) return -1;
 
@@ -189,12 +192,25 @@ int TunnelCallbacks::establishVpn(const std::string& ip, int prefix,
         env->DeleteLocalRef(s);
     }
 
-    jint fd = env->CallIntMethod(engineObj, onEstablishVpn, jip, (jint)prefix, jipv6, (jint)prefixIpv6, (jint)mtu, jdns, jroutes);
+    jobjectArray jexcluded = env->NewObjectArray((jsize)excludedRoutes.size(), strCls, nullptr);
+    for (size_t i = 0; i < excludedRoutes.size(); ++i) {
+        jstring s = env->NewStringUTF(excludedRoutes[i].c_str());
+        env->SetObjectArrayElement(jexcluded, (jsize)i, s);
+        env->DeleteLocalRef(s);
+    }
+
+    jint fd = env->CallIntMethod(engineObj, onEstablishVpn,
+                                 jip, (jint)prefix, jipv6, (jint)prefixIpv6, (jint)mtu,
+                                 jdns, jroutes,
+                                 rerouteGwIpv4 ? JNI_TRUE : JNI_FALSE,
+                                 rerouteGwIpv6 ? JNI_TRUE : JNI_FALSE,
+                                 jexcluded);
 
     env->DeleteLocalRef(jip);
     env->DeleteLocalRef(jipv6);
     env->DeleteLocalRef(jdns);
     env->DeleteLocalRef(jroutes);
+    env->DeleteLocalRef(jexcluded);
     env->DeleteLocalRef(strCls);
 
     if (env->ExceptionCheck()) {
@@ -232,7 +248,7 @@ bool TunnelEngine::initialize(JNIEnv* env, jobject engineObj) {
     callbacks.onStatsUpdated = env->GetMethodID(cls, "onStatsUpdated", "(JJ)V");
     callbacks.onLog = env->GetMethodID(cls, "onLog", "(ILjava/lang/String;)V");
     callbacks.onProtectSocket = env->GetMethodID(cls, "onProtectSocket", "(I)Z");
-    callbacks.onEstablishVpn = env->GetMethodID(cls, "onEstablishVpn", "(Ljava/lang/String;ILjava/lang/String;II[Ljava/lang/String;[Ljava/lang/String;)I");
+    callbacks.onEstablishVpn = env->GetMethodID(cls, "onEstablishVpn", "(Ljava/lang/String;ILjava/lang/String;II[Ljava/lang/String;[Ljava/lang/String;ZZ[Ljava/lang/String;)I");
 
     if (env->ExceptionCheck()) {
         LOGE("Exception occurred while resolving TunnelEngine methods");
@@ -545,6 +561,11 @@ int TunnelEngine::sendData(int connId, const uint8_t* data, int offset, int leng
         bytesOut.fetch_add(sent);
     }
     return sent;
+}
+
+void TunnelEngine::acknowledgeData(int connId, int length) {
+    if (!running.load() || !g_lwipTunnel || length <= 0) return;
+    g_lwipTunnel->acknowledgeTcpData(connId, length);
 }
 
 void TunnelEngine::closeConnection(int connId) {

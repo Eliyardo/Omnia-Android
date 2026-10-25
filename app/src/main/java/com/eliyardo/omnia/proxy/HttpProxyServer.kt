@@ -28,14 +28,18 @@ class HttpProxyServer(
         private const val TAG = "HttpProxyServer"
         private const val BUFFER_SIZE = 32768
         private const val CONNECT_TIMEOUT_MS = 30000
+        private const val PRE_AUTH_TIMEOUT_MS = 5000
         private const val MAX_HEADER_SIZE = 8192
         private const val MAX_CONCURRENT_CONNECTIONS = 64
+        private const val CHANNEL_CAPACITY = 32
     }
     
     private var serverSocket: ServerSocket? = null
     private val running = AtomicBoolean(false)
     private val activeConnections = AtomicInteger(0)
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val proxyExecutor = java.util.concurrent.Executors.newFixedThreadPool(MAX_CONCURRENT_CONNECTIONS)
+    private val proxyDispatcher = proxyExecutor.asCoroutineDispatcher()
+    private val scope = CoroutineScope(proxyDispatcher + SupervisorJob())
     
     val isRunning: Boolean get() = running.get()
     val connectionCount: Int get() = activeConnections.get()
@@ -70,13 +74,14 @@ class HttpProxyServer(
         }
         serverSocket = null
         scope.cancel()
+        proxyExecutor.shutdown()
         Log.i(TAG, "HTTP proxy server stopped")
     }
     
     private suspend fun acceptLoop(ss: ServerSocket) {
         while (running.get()) {
             try {
-                val clientSocket = withContext(Dispatchers.IO) { ss.accept() }
+                val clientSocket = withContext(proxyDispatcher) { ss.accept() }
                 if (activeConnections.get() >= MAX_CONCURRENT_CONNECTIONS) {
                     try {
                         val out = clientSocket.getOutputStream()
@@ -108,8 +113,9 @@ class HttpProxyServer(
         }
     }
     
-    private suspend fun handleClient(clientSocket: Socket) = withContext(Dispatchers.IO) {
-        clientSocket.soTimeout = CONNECT_TIMEOUT_MS
+    private suspend fun handleClient(clientSocket: Socket) = withContext(proxyDispatcher) {
+        // Enforce short pre-authentication timeout to prevent slot exhaustion
+        clientSocket.soTimeout = PRE_AUTH_TIMEOUT_MS
         val input = clientSocket.getInputStream()
         val output = clientSocket.getOutputStream()
         
@@ -157,6 +163,8 @@ class HttpProxyServer(
     
     private fun validateAuth(authHeader: String?): Boolean {
         if (authHeader == null) return false
+        // Fail-closed: refuse auth if server credentials are not properly set
+        if (authUsername.isBlank() || authPassword.isBlank()) return false
         
         val parts = authHeader.split(":", limit = 2)
         if (parts.size < 2) return false
@@ -173,6 +181,9 @@ class HttpProxyServer(
             
             val username = decoded.substring(0, colonIndex)
             val password = decoded.substring(colonIndex + 1)
+            
+            // Reject empty user/password headers
+            if (username.isEmpty() || password.isEmpty()) return false
             
             val userMatches = java.security.MessageDigest.isEqual(
                 username.toByteArray(Charsets.UTF_8),
@@ -237,7 +248,7 @@ class HttpProxyServer(
         
         // Create tunnel connection
         val completableDeferred = CompletableDeferred<Boolean>()
-        val dataChannel = Channel<ByteArray>(Channel.UNLIMITED)
+        val dataChannel = Channel<ByteArray>(CHANNEL_CAPACITY)
         val connectionClosed = AtomicBoolean(false)
         
         val callback = object : TunnelEngine.TunnelConnectionCallback {
@@ -293,23 +304,28 @@ class HttpProxyServer(
         // Bidirectional relay (same as SOCKS5)
         try {
             coroutineScope {
-                val clientToTunnel = launch(Dispatchers.IO) {
+                val clientToTunnel = launch(proxyDispatcher) {
                     try {
                         val buffer = ByteArray(BUFFER_SIZE)
                         while (!connectionClosed.get() && running.get()) {
                             val read = clientInput.read(buffer)
                             if (read <= 0) break
-                            tunnelEngine.sendData(connId, buffer, 0, read)
+                            val sent = tunnelEngine.sendData(connId, buffer, 0, read)
+                            if (sent < 0) {
+                                Log.w(TAG, "sendData failed / buffer overflow; closing conn $connId")
+                                break
+                            }
                         }
                     } catch (e: IOException) { }
                     finally { tunnelEngine.closeConnection(connId) }
                 }
                 
-                val tunnelToClient = launch(Dispatchers.IO) {
+                val tunnelToClient = launch(proxyDispatcher) {
                     try {
                         for (data in dataChannel) {
                             clientOutput.write(data)
                             clientOutput.flush()
+                            tunnelEngine.acknowledgeData(connId, data.size)
                         }
                     } catch (e: IOException) { }
                     finally { try { clientSocket.close() } catch (_: Exception) {} }
@@ -352,10 +368,13 @@ class HttpProxyServer(
             return
         }
         
-        val host = uri.host ?: run {
+        val hostRaw = uri.host ?: run {
             sendErrorResponse(clientOutput, 400, "Bad Request - missing host")
             return
         }
+        val host = if (hostRaw.startsWith("[") && hostRaw.endsWith("]")) {
+            hostRaw.substring(1, hostRaw.length - 1)
+        } else hostRaw
         val port = if (uri.port > 0) uri.port else 80
         val rawPath = uri.rawPath
         val path = (if (rawPath.isNullOrEmpty()) "/" else rawPath) + (if (uri.rawQuery != null) "?${uri.rawQuery}" else "")
@@ -364,7 +383,7 @@ class HttpProxyServer(
         
         // Connect through tunnel
         val completableDeferred = CompletableDeferred<Boolean>()
-        val dataChannel = Channel<ByteArray>(Channel.UNLIMITED)
+        val dataChannel = Channel<ByteArray>(CHANNEL_CAPACITY)
         val connectionClosed = AtomicBoolean(false)
         
         val callback = object : TunnelEngine.TunnelConnectionCallback {
@@ -424,26 +443,34 @@ class HttpProxyServer(
         
         tunnelEngine.sendData(connId, rewrittenRequest.toString().toByteArray())
         
+        // Clear socket timeout for active plain HTTP streaming session
+        clientSocket.soTimeout = 0
+        
         // Relay response back
         try {
             coroutineScope {
-                val clientToTunnel = launch(Dispatchers.IO) {
+                val clientToTunnel = launch(proxyDispatcher) {
                     try {
                         val buffer = ByteArray(BUFFER_SIZE)
                         while (!connectionClosed.get() && running.get()) {
                             val read = clientInput.read(buffer)
                             if (read <= 0) break
-                            tunnelEngine.sendData(connId, buffer, 0, read)
+                            val sent = tunnelEngine.sendData(connId, buffer, 0, read)
+                            if (sent < 0) {
+                                Log.w(TAG, "sendData failed / buffer overflow; closing conn $connId")
+                                break
+                            }
                         }
                     } catch (e: IOException) { }
                     finally { tunnelEngine.closeConnection(connId) }
                 }
                 
-                val tunnelToClient = launch(Dispatchers.IO) {
+                val tunnelToClient = launch(proxyDispatcher) {
                     try {
                         for (data in dataChannel) {
                             clientOutput.write(data)
                             clientOutput.flush()
+                            tunnelEngine.acknowledgeData(connId, data.size)
                         }
                     } catch (e: IOException) { }
                     finally { try { clientSocket.close() } catch (_: Exception) {} }

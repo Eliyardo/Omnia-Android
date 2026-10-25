@@ -227,6 +227,10 @@ int LwipTunnel::sendTcpData(int connId, const uint8_t* data, int length) {
     if (toSend <= 0) {
         /* Buffer full, queue for later */
         std::lock_guard<std::mutex> lock(conn->sendMutex);
+        if (conn->sendBuffer.size() > 1048576) {
+            LOGE("Send buffer overflow (>1MB) for connId=%d", connId);
+            return -1;
+        }
         conn->sendBuffer.insert(conn->sendBuffer.end(), data, data + length);
         return length; /* Report as sent (buffered) */
     }
@@ -242,10 +246,23 @@ int LwipTunnel::sendTcpData(int connId, const uint8_t* data, int length) {
     /* Buffer remaining if any */
     if (toSend < length) {
         std::lock_guard<std::mutex> lock(conn->sendMutex);
+        if (conn->sendBuffer.size() > 1048576) {
+            LOGE("Send buffer overflow (>1MB) for connId=%d", connId);
+            return -1;
+        }
         conn->sendBuffer.insert(conn->sendBuffer.end(), data + toSend, data + length);
     }
 
     return length;
+}
+
+void LwipTunnel::acknowledgeTcpData(int connId, int length) {
+    std::lock_guard<std::recursive_mutex> lock(lwipMutex);
+    TunnelConnection* conn = engine->getConnection(connId);
+    if (!conn || !conn->tcp_pcb || conn->closing.load()) return;
+
+    struct tcp_pcb* pcb = static_cast<struct tcp_pcb*>(conn->tcp_pcb);
+    tcp_recved(pcb, (u16_t)length);
 }
 
 void LwipTunnel::closeTcp(int connId) {
@@ -516,8 +533,10 @@ err_t LwipTunnel::tcpRecvCb(void* arg, struct tcp_pcb* tpcb, struct pbuf* p, err
     u16_t totalLen = (p->tot_len < (u16_t)sizeof(buffer)) ? p->tot_len : (u16_t)sizeof(buffer);
     pbuf_copy_partial(p, buffer, totalLen, 0);
 
-    /* Acknowledge received data */
-    tcp_recved(tpcb, p->tot_len);
+    /* Free pbuf memory immediately.
+     * Note: We intentionally do NOT call tcp_recved() here.
+     * Backpressure flow control: tcp_recved() is invoked via acknowledgeTcpData()
+     * after the Kotlin proxy client consumes and flushes the data. */
     pbuf_free(p);
 
     if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {

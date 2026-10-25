@@ -63,6 +63,10 @@ private:
     std::string m_gateway;
     std::vector<std::string> m_dnsServers;
     std::vector<std::string> m_routes;
+    std::vector<std::string> m_excludedRoutes;
+    bool m_rerouteGwIpv4 = false;
+    bool m_rerouteGwIpv6 = false;
+    unsigned int m_rerouteGwFlags = 0;
     int m_mtu = 1500;
 };
 

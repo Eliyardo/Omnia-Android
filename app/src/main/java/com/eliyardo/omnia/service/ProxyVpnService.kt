@@ -76,9 +76,10 @@ class ProxyVpnService : VpnService() {
 
     // Cached settings to prevent blocking calls on JNI/OpenVPN native threads
     private var cachedTunnelMode: String = AppSettings.TUNNEL_MODE_TUN
-    private var cachedLegacyCrypto: Boolean = true
+    private var cachedLegacyCrypto: Boolean = false
     private var cachedIpv6Enabled: Boolean = true
     private var cachedAllowLan: Boolean = false
+    private var cachedBlockTrafficOnDrop: Boolean = true
     private var cachedDnsProvider: String = AppSettings.DNS_PROVIDER_SERVER
     private var cachedCustomDnsPrimary: String = ""
     private var cachedCustomDnsSecondary: String = ""
@@ -88,6 +89,8 @@ class ProxyVpnService : VpnService() {
 
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
     private var reconnectJob: Job? = null
+    private var reconnectAttempts = 0
+    private val MAX_RECONNECT_ATTEMPTS = 5
     private var listenersJob: Job? = null
     private var lastProfileContent: String? = null
     private var lastUsername: String? = null
@@ -148,8 +151,8 @@ class ProxyVpnService : VpnService() {
             }
             ok
         }
-        tunnelEngine.onEstablishVpnCallback = { ip, prefix, ipv6, ipv6Prefix, mtu, dns, routes ->
-            establishVpnInterface(ip, prefix, ipv6, ipv6Prefix, mtu, dns, routes)
+        tunnelEngine.onEstablishVpnCallback = { ip, prefix, ipv6, ipv6Prefix, mtu, dns, routes, rerouteGwIpv4, rerouteGwIpv6, excludedRoutes ->
+            establishVpnInterface(ip, prefix, ipv6, ipv6Prefix, mtu, dns, routes, rerouteGwIpv4, rerouteGwIpv6, excludedRoutes)
         }
     }
 
@@ -160,6 +163,7 @@ class ProxyVpnService : VpnService() {
             launch { settings.legacyCrypto.collect { cachedLegacyCrypto = it } }
             launch { settings.ipv6Enabled.collect { cachedIpv6Enabled = it } }
             launch { settings.allowLan.collect { cachedAllowLan = it } }
+            launch { settings.blockTrafficOnDrop.collect { cachedBlockTrafficOnDrop = it } }
             launch { settings.dnsProvider.collect { cachedDnsProvider = it } }
             launch { settings.customDnsPrimary.collect { cachedCustomDnsPrimary = it } }
             launch { settings.customDnsSecondary.collect { cachedCustomDnsSecondary = it } }
@@ -180,6 +184,7 @@ class ProxyVpnService : VpnService() {
                     updateNotification(state, tunnelEngine.stats.value)
                     when (state) {
                         is TunnelState.Connected -> {
+                            reconnectAttempts = 0
                             val isProxyMode = cachedTunnelMode == AppSettings.TUNNEL_MODE_PROXY
                             if (isProxyMode) {
                                 startProxyServers()
@@ -187,7 +192,10 @@ class ProxyVpnService : VpnService() {
                                 stopProxyServers()
                             }
                         }
-                        is TunnelState.Disconnected -> stopProxyServers()
+                        is TunnelState.Disconnected -> {
+                            reconnectAttempts = 0
+                            stopProxyServers()
+                        }
                         is TunnelState.Error -> {
                             stopProxyServers()
                             handleError(state)
@@ -289,7 +297,10 @@ class ProxyVpnService : VpnService() {
         ipv6Prefix: Int,
         mtu: Int,
         pushedDns: Array<String>,
-        pushedRoutes: Array<String>
+        pushedRoutes: Array<String>,
+        rerouteGwIpv4: Boolean,
+        rerouteGwIpv6: Boolean,
+        excludedRoutes: Array<String>
     ): Int {
         return try {
             val builder = Builder()
@@ -309,27 +320,25 @@ class ProxyVpnService : VpnService() {
             val actualPrefix = if (prefix in 1..32) prefix else 24
             builder.addAddress(actualIp, actualPrefix)
 
-            // IPv6 Configuration & Leak Prevention
-            if (cachedIpv6Enabled) {
-                try {
-                    if (!assignedIpv6.isNullOrBlank()) {
-                        val actualIpv6Prefix = if (ipv6Prefix in 1..128) ipv6Prefix else 64
-                        builder.addAddress(assignedIpv6, actualIpv6Prefix)
-                        builder.addRoute("::", 0)
-                        Log.i(TAG, "Configured pushed IPv6 address: $assignedIpv6/$actualIpv6Prefix and route ::/0")
-                    } else {
-                        // Routing IPv6 to dummy ULA fd00::1/128 to prevent leaks on dual-stack networks
-                        builder.addAddress("fd00::1", 128)
-                        builder.addRoute("::", 0)
-                        Log.i(TAG, "Configured IPv6 leak-protection address fd00::1/128 and route ::/0")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not configure IPv6 route on VpnService.Builder", e)
+            // IPv6 Configuration & Leak Prevention (fail-closed)
+            // Even if the user disables IPv6 or server provides none, route ::/0 to a dummy blackhole
+            // so dual-stack Android devices never leak IPv6 traffic outside the VPN.
+            try {
+                if (cachedIpv6Enabled && !assignedIpv6.isNullOrBlank()) {
+                    val actualIpv6Prefix = if (ipv6Prefix in 1..128) ipv6Prefix else 64
+                    builder.addAddress(assignedIpv6, actualIpv6Prefix)
+                    builder.addRoute("::", 0)
+                    Log.i(TAG, "Configured pushed IPv6 address: $assignedIpv6/$actualIpv6Prefix and route ::/0")
+                } else {
+                    builder.addAddress("fd00::1", 128)
+                    builder.addRoute("::", 0)
+                    Log.i(TAG, "Configured IPv6 leak-protection blackhole fd00::1/128 and route ::/0")
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not configure IPv6 route on VpnService.Builder", e)
             }
 
             // Server-Pushed & Default Routes
-            var addedPushedRoute = false
             for (r in pushedRoutes) {
                 try {
                     val parts = r.split("/")
@@ -337,15 +346,38 @@ class ProxyVpnService : VpnService() {
                         val routeIp = parts[0]
                         val routePrefix = parts[1].toIntOrNull() ?: continue
                         builder.addRoute(routeIp, routePrefix)
-                        addedPushedRoute = true
                         Log.i(TAG, "Added pushed route: $routeIp/$routePrefix")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed adding pushed route $r", e)
                 }
             }
-            if (!addedPushedRoute) {
-                builder.addRoute("0.0.0.0", 0)
+
+            // If redirect-gateway is indicated or no specific routes were pushed, install default route
+            if (rerouteGwIpv4 || pushedRoutes.isEmpty()) {
+                try {
+                    builder.addRoute("0.0.0.0", 0)
+                    Log.i(TAG, "Added default IPv4 route 0.0.0.0/0 (rerouteGwIpv4=$rerouteGwIpv4, pushedRoutes=${pushedRoutes.size})")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed adding default IPv4 route 0.0.0.0/0", e)
+                }
+            }
+
+            // API 33+ Excluded Routes (e.g. bypassing local subnets or bypass-dhcp)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                for (ex in excludedRoutes) {
+                    try {
+                        val parts = ex.split("/")
+                        if (parts.size == 2) {
+                            val addr = java.net.InetAddress.getByName(parts[0])
+                            val pfx = parts[1].toIntOrNull() ?: continue
+                            builder.excludeRoute(android.net.IpPrefix(addr, pfx))
+                            Log.i(TAG, "Excluded route: $ex")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed excluding route $ex", e)
+                    }
+                }
             }
 
             // DNS Configuration
@@ -436,6 +468,7 @@ class ProxyVpnService : VpnService() {
         val scope = ensureServiceScope()
         scope.launch(Dispatchers.IO) {
             try {
+                reconnectAttempts = 0
                 reconnectJob?.cancel()
                 lastProfileContent = null
                 stopProxyServers()
@@ -465,20 +498,35 @@ class ProxyVpnService : VpnService() {
         serviceScope.launch {
             val socks5Port = settings.socks5Port.first()
             val httpPort = settings.httpPort.first()
-            val authEnabled = settings.proxyAuthEnabled.first()
+            val rawAuthEnabled = settings.proxyAuthEnabled.first()
             val authUser = settings.proxyUsername.first()
             val authPass = settings.proxyPassword.first()
             val remoteDns = settings.dnsMode.first() == AppSettings.DNS_MODE_REMOTE
-            val bindAddr = settings.bindAddress.first()
+            val rawBindAddr = settings.bindAddress.first()
+            val allowLan = settings.allowLan.first()
+
+            // Defense-in-depth: If LAN binding (0.0.0.0) is requested without valid authentication credentials,
+            // refuse to bind to 0.0.0.0 and revert to local loopback 127.0.0.1
+            val effectiveBindAddr = if (allowLan && rawBindAddr == "0.0.0.0") {
+                if (rawAuthEnabled && authUser.isNotBlank() && authPass.isNotEmpty()) {
+                    "0.0.0.0"
+                } else {
+                    Log.w(TAG, "LAN access is enabled but proxy authentication is not configured. Forcing bind address to 127.0.0.1 for security.")
+                    "127.0.0.1"
+                }
+            } else {
+                rawBindAddr
+            }
+            val effectiveAuth = rawAuthEnabled && authUser.isNotBlank() && authPass.isNotEmpty()
 
             socks5Server?.stop()
             httpProxyServer?.stop()
 
             socks5Server = Socks5Server(
                 tunnelEngine = tunnelEngine,
-                bindAddress = bindAddr,
+                bindAddress = effectiveBindAddr,
                 port = socks5Port,
-                authRequired = authEnabled,
+                authRequired = effectiveAuth,
                 authUsername = authUser,
                 authPassword = authPass,
                 remoteDns = remoteDns
@@ -486,9 +534,9 @@ class ProxyVpnService : VpnService() {
 
             httpProxyServer = HttpProxyServer(
                 tunnelEngine = tunnelEngine,
-                bindAddress = bindAddr,
+                bindAddress = effectiveBindAddr,
                 port = httpPort,
-                authRequired = authEnabled,
+                authRequired = effectiveAuth,
                 authUsername = authUser,
                 authPassword = authPass,
                 remoteDns = remoteDns
@@ -517,32 +565,44 @@ class ProxyVpnService : VpnService() {
     }
 
     private fun handleError(error: TunnelState.Error) {
-        if (error.isRecoverable) {
-            serviceScope.launch {
-                val autoReconnect = settings.autoReconnect.first()
-                if (autoReconnect && lastProfileContent != null) {
-                    val delaySeconds = settings.reconnectDelaySeconds.first()
-                    reconnectJob?.cancel()
-                    reconnectJob = serviceScope.launch {
-                        delay(delaySeconds * 1000L)
-                        Log.i(TAG, "Attempting auto-reconnect...")
-                        lastProfileContent?.let {
-                            applyDnsSettings()
-                            val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
-                            val legacyCrypto = settings.legacyCrypto.first()
-                            val ipv6Enabled = settings.ipv6Enabled.first()
-                            val allowLan = settings.allowLan.first()
-                            withContext(Dispatchers.IO) {
-                                tunnelEngine.connect(
-                                    profileContent = it,
-                                    username = lastUsername,
-                                    password = lastPassword,
-                                    isTunMode = isTun,
-                                    legacyCrypto = legacyCrypto,
-                                    ipv6Enabled = ipv6Enabled,
-                                    allowLan = allowLan
-                                )
-                            }
+        if (!error.isRecoverable) {
+            Log.w(TAG, "Unrecoverable tunnel error: ${error.message}")
+            return
+        }
+        serviceScope.launch {
+            val autoReconnect = settings.autoReconnect.first()
+            if (autoReconnect && lastProfileContent != null) {
+                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                    Log.w(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached. Aborting auto-reconnect.")
+                    val nm = getSystemService(NotificationManager::class.java)
+                    nm?.notify(NOTIFICATION_ID, createNotification("Connection Failed", "Max retries reached. Tap Disconnect."))
+                    return@launch
+                }
+                reconnectAttempts++
+                val delaySeconds = settings.reconnectDelaySeconds.first().coerceAtLeast(1)
+                val backoffFactor = 1L shl (reconnectAttempts - 1).coerceAtMost(6) // 1, 2, 4, 8, 16...
+                val delayMs = (delaySeconds * 1000L * backoffFactor).coerceAtMost(60_000L)
+                Log.i(TAG, "Scheduling auto-reconnect attempt $reconnectAttempts in ${delayMs / 1000}s...")
+                reconnectJob?.cancel()
+                reconnectJob = serviceScope.launch {
+                    delay(delayMs)
+                    Log.i(TAG, "Executing auto-reconnect attempt $reconnectAttempts...")
+                    lastProfileContent?.let {
+                        applyDnsSettings()
+                        val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
+                        val legacyCrypto = settings.legacyCrypto.first()
+                        val ipv6Enabled = settings.ipv6Enabled.first()
+                        val allowLan = settings.allowLan.first()
+                        withContext(Dispatchers.IO) {
+                            tunnelEngine.connect(
+                                profileContent = it,
+                                username = lastUsername,
+                                password = lastPassword,
+                                isTunMode = isTun,
+                                legacyCrypto = legacyCrypto,
+                                ipv6Enabled = ipv6Enabled,
+                                allowLan = allowLan
+                            )
                         }
                     }
                 }
@@ -551,36 +611,45 @@ class ProxyVpnService : VpnService() {
     }
 
     private fun registerNetworkCallback() {
-        val cm = getSystemService(ConnectivityManager::class.java)
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
         connectivityCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                Log.d(TAG, "Network available: $network")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                    try {
-                        setUnderlyingNetworks(arrayOf(network))
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to set underlying network", e)
-                    }
+                Log.d(TAG, "Default network available: $network")
+                try {
+                    setUnderlyingNetworks(arrayOf(network))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to set underlying network", e)
                 }
             }
 
             override fun onLost(network: Network) {
-                Log.d(TAG, "Network lost: $network")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                    try {
-                        setUnderlyingNetworks(null)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed to clear underlying network", e)
-                    }
+                Log.d(TAG, "Default network lost: $network")
+                try {
+                    setUnderlyingNetworks(null)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to clear underlying network", e)
                 }
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                try {
+                    setUnderlyingNetworks(arrayOf(network))
+                } catch (_: Exception) {}
             }
         }
 
-        cm.registerNetworkCallback(request, connectivityCallback!!)
+        try {
+            cm.registerDefaultNetworkCallback(connectivityCallback!!)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                Log.i(TAG, "Underlying network monitoring active. isAlwaysOn=$isAlwaysOn, isLockdownEnabled=$isLockdownEnabled")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "registerDefaultNetworkCallback failed, falling back to general request", e)
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            cm.registerNetworkCallback(request, connectivityCallback!!)
+        }
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -663,24 +732,29 @@ class ProxyVpnService : VpnService() {
         try {
             val nm = getSystemService(NotificationManager::class.java)
 
-            // When disconnected or on error, tear down the TUN interface to avoid blackholing traffic
-            if (state is TunnelState.Disconnected || state is TunnelState.Error) {
+            // Manage interface teardown and notification on Disconnected or Error states
+            if (state is TunnelState.Disconnected) {
                 try {
                     vpnInterface?.close()
                     vpnInterface = null
                 } catch (_: Exception) {}
-
-                if (state is TunnelState.Disconnected) {
-                    nm?.cancel(NOTIFICATION_ID)
+                nm?.cancel(NOTIFICATION_ID)
+                try {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } catch (_: Exception) {}
+                return
+            } else if (state is TunnelState.Error) {
+                if (!cachedBlockTrafficOnDrop) {
                     try {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        vpnInterface?.close()
+                        vpnInterface = null
                     } catch (_: Exception) {}
-                    return
-                } else if (state is TunnelState.Error) {
-                    val errorNotification = createNotification("Connection Error", state.message)
-                    nm?.notify(NOTIFICATION_ID, errorNotification)
-                    return
                 }
+                val errorTitle = if (cachedBlockTrafficOnDrop) "VPN Lost — Traffic Blocked" else "Connection Error"
+                val errorSub = if (cachedBlockTrafficOnDrop) "Kill-switch active. Tap Disconnect to restore network." else state.message
+                val errorNotification = createNotification(errorTitle, errorSub)
+                nm?.notify(NOTIFICATION_ID, errorNotification)
+                return
             }
 
             val (status, subText) = when (state) {

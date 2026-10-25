@@ -141,10 +141,10 @@ cd Omnia-Android
 
 Build outputs are located in:
 `app/build/outputs/apk/release/`
-- `Omnia-1.0.3-arm64-v8a-release.apk`
-- `Omnia-1.0.3-armeabi-v7a-release.apk`
-- `Omnia-1.0.3-x86_64-release.apk`
-- `Omnia-1.0.3-universal-release.apk`
+- `Omnia-1.0.4-arm64-v8a-release.apk`
+- `Omnia-1.0.4-armeabi-v7a-release.apk`
+- `Omnia-1.0.4-x86_64-release.apk`
+- `Omnia-1.0.4-universal-release.apk`
 
 ---
 

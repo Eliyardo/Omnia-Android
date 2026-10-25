@@ -42,22 +42,28 @@ jobs:
       - name: Determine Version and Tag
         id: versioning
         env:
-          INPUT_TAG: ${{ github.event.inputs.tag_name }}
-          REF_NAME: ${{ github.ref_name }}
-          REF_TYPE: ${{ github.ref_type }}
+            INPUT_TAG: ${{ github.event.inputs.tag_name }}
+            REF_NAME: ${{ github.ref_name }}
+            REF_TYPE: ${{ github.ref_type }}
         run: |
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
           elif [ "$REF_TYPE" = "tag" ]; then
             TAG="$REF_NAME"
           else
-            TAG="v1.0.3"
+            TAG="v1.0.4"
+          fi
+          
+          # Enforce semantic tag format
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '$TAG' does not match semantic versioning pattern ^v[0-9]+\.[0-9]+\.[0-9]+$"
+            exit 1
           fi
           
           # Strip leading 'v' for android versionName
           VERSION_NAME="${TAG#v}"
           
-          # Derive integer versionCode from tag (e.g. 1.0.0 -> 10000, 1.2.3 -> 10203)
+          # Derive integer versionCode from tag (e.g. 1.0.4 -> 10004)
           IFS='.' read -r major minor patch <<< "$VERSION_NAME"
           major=${major:-1}
           minor=${minor:-0}
@@ -78,21 +84,18 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            echo "has_signing=true" >> $GITHUB_OUTPUT
-            echo "Keystore decoded successfully."
-            echo "Keystore contents:"
-            keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$KEYSTORE_PASSWORD" || true
-          else
-            echo "has_signing=false" >> $GITHUB_OUTPUT
-            echo "::warning ::No RELEASE_KEYSTORE_BASE64 secret provided. Falling back to unsigned/debug build."
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Missing RELEASE_KEYSTORE_BASE64 or RELEASE_KEYSTORE_PASSWORD secret. Cannot publish unverified or unsigned release."
+            exit 1
           fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "Keystore decoded successfully."
 
       - name: Build Release Split APKs
         env:
           VERSION_NAME: ${{ steps.versioning.outputs.version_name }}
           VERSION_CODE: ${{ steps.versioning.outputs.version_code }}
+          REQUIRE_RELEASE_SIGNING: "true"
           KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
@@ -103,10 +106,22 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/release.jks"
 
+      - name: Verify APK Signatures with apksigner
+        run: |
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          echo "Using Android Build-Tools from: $BUILD_TOOLS_DIR"
+          for apk in app/build/outputs/apk/release/*.apk; do
+            echo "Verifying signature of: $apk"
+            $BUILD_TOOLS_DIR/apksigner verify --verbose --print-certs "$apk"
+          done
+
       - name: Prepare Release Artifacts & SHA256 Checksums
         run: |
           mkdir -p release-artifacts
           cp app/build/outputs/apk/release/*.apk release-artifacts/
+          if [ -f app/build/outputs/mapping/release/mapping.txt ]; then
+            cp app/build/outputs/mapping/release/mapping.txt release-artifacts/mapping-release.txt
+          fi
           cd release-artifacts
           sha256sum *.apk > sha256sums.txt
           echo "=== Generated Artifacts ==="

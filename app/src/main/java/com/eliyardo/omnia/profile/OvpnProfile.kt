@@ -1,4 +1,4 @@
-﻿package com.eliyardo.omnia.profile
+package com.eliyardo.omnia.profile
 
 import java.util.UUID
 
@@ -18,10 +18,13 @@ data class OvpnProfile(
     val hasKey: Boolean = false,
     val hasTlsAuth: Boolean = false,
     val hasTlsCrypt: Boolean = false,
+    val caFingerprint: String? = null,
     val warnings: List<String> = emptyList(),
-    val errors: List<String> = emptyList()
+    val errors: List<String> = emptyList(),
+    val isCorrupted: Boolean = false,
+    val decryptionError: String? = null
 ) {
-    val isValid: Boolean get() = errors.isEmpty() && hasCa
+    val isValid: Boolean get() = errors.isEmpty() && hasCa && !isCorrupted
     val hasInlineCredentials: Boolean get() = !inlineUsername.isNullOrBlank() && !inlinePassword.isNullOrBlank()
 }
 

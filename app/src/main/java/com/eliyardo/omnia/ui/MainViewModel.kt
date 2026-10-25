@@ -63,11 +63,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     data class StagedProfileImport(
         val uri: Uri,
         val fileName: String,
+        val rawContent: String,
         val remoteHost: String,
         val remotePort: Int,
         val protocol: String,
         val hasAuth: Boolean,
         val hasCa: Boolean,
+        val caFingerprint: String? = null,
         val warnings: List<String>
     )
 
@@ -207,14 +209,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
+                val sanitizedName = name
+                    .replace(Regex("[/\\\\:*?\"<>|\\x00-\\x1F]"), "_")
+                    .take(64)
+                    .ifEmpty { "imported.ovpn" }
+
                 _stagedImport.value = StagedProfileImport(
                     uri = uri,
-                    fileName = name,
+                    fileName = sanitizedName,
+                    rawContent = content,
                     remoteHost = p.remoteHost,
                     remotePort = p.remotePort,
                     protocol = p.protocol,
                     hasAuth = p.hasAuth,
                     hasCa = p.hasCa,
+                    caFingerprint = p.caFingerprint,
                     warnings = parsed.warnings
                 )
             } catch (e: Exception) {
@@ -227,7 +236,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun confirmStagedImport() {
         val staged = _stagedImport.value ?: return
         _stagedImport.value = null
-        importProfile(staged.uri)
+        viewModelScope.launch {
+            // Import directly from the in-memory parsed & verified content (eliminates TOCTOU - M1)
+            val result = profileManager.importProfileContent(staged.rawContent, staged.fileName)
+            _importResult.value = result
+            if (result.errors.isNotEmpty()) {
+                _errorMessage.value = result.errors.joinToString("\n")
+            }
+        }
     }
 
     fun cancelStagedImport() {

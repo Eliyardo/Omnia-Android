@@ -35,6 +35,7 @@ class AppSettings(private val context: Context) {
         val ALLOW_LAN = booleanPreferencesKey("allow_lan")
         val IPV6_ENABLED = booleanPreferencesKey("ipv6_enabled")
         val LEGACY_CRYPTO = booleanPreferencesKey("legacy_crypto")
+        val BLOCK_TRAFFIC_ON_DROP = booleanPreferencesKey("block_traffic_on_drop")
 
         // Split Tunneling (Per-App Routing in TUN mode)
         val SPLIT_TUNNEL_ENABLED = booleanPreferencesKey("split_tunnel_enabled")
@@ -94,7 +95,8 @@ class AppSettings(private val context: Context) {
         val raw = it[PROXY_PASSWORD] ?: ""
         if (raw.isNotEmpty()) {
             val decrypted = com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
-            if (decrypted.isNotEmpty()) decrypted else raw
+            // If Keystore decryption fails, treat as invalidated and return empty (never leak raw ciphertext)
+            decrypted
         } else ""
     }
     val dnsMode: Flow<String> = context.dataStore.data.map { it[DNS_MODE] ?: DNS_MODE_REMOTE }
@@ -108,6 +110,7 @@ class AppSettings(private val context: Context) {
     val allowLan: Flow<Boolean> = context.dataStore.data.map { it[ALLOW_LAN] ?: false }
     val ipv6Enabled: Flow<Boolean> = context.dataStore.data.map { it[IPV6_ENABLED] ?: true }
     val legacyCrypto: Flow<Boolean> = context.dataStore.data.map { it[LEGACY_CRYPTO] ?: false }
+    val blockTrafficOnDrop: Flow<Boolean> = context.dataStore.data.map { it[BLOCK_TRAFFIC_ON_DROP] ?: true }
 
     val splitTunnelEnabled: Flow<Boolean> = context.dataStore.data.map { it[SPLIT_TUNNEL_ENABLED] ?: false }
     val splitTunnelMode: Flow<String> = context.dataStore.data.map { it[SPLIT_TUNNEL_MODE] ?: SPLIT_TUNNEL_ALLOWLIST }
@@ -130,13 +133,18 @@ class AppSettings(private val context: Context) {
     }
     
     suspend fun setProxyAuth(enabled: Boolean, username: String = "", password: String = "") {
+        val actualEnabled = enabled && username.isNotBlank() && password.isNotEmpty()
         context.dataStore.edit {
-            it[PROXY_AUTH_ENABLED] = enabled
-            it[PROXY_USERNAME] = username
-            it[PROXY_PASSWORD] = if (password.isNotEmpty()) {
+            it[PROXY_AUTH_ENABLED] = actualEnabled
+            it[PROXY_USERNAME] = if (actualEnabled) username.trim() else ""
+            it[PROXY_PASSWORD] = if (actualEnabled && password.isNotEmpty()) {
                 com.eliyardo.omnia.security.KeystoreHelper.encrypt(password)
             } else ""
         }
+    }
+
+    suspend fun setBlockTrafficOnDrop(block: Boolean) {
+        context.dataStore.edit { it[BLOCK_TRAFFIC_ON_DROP] = block }
     }
     
     suspend fun setDnsMode(mode: String) {

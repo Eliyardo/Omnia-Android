@@ -53,6 +53,9 @@ public:
     /* Send data through an existing TCP connection */
     int sendTcpData(int connId, const uint8_t* data, int length);
 
+    /* Acknowledge received data to advance TCP receive window (backpressure flow control) */
+    void acknowledgeTcpData(int connId, int length);
+
     /* Close a TCP connection */
     void closeTcp(int connId);
 
