@@ -474,8 +474,21 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
     }
 }
 
+void TunnelEngine::setCustomDns(const std::string& dns1, const std::string& dns2) {
+    customDns1 = dns1;
+    customDns2 = dns2;
+
+    if (g_lwipTunnel) {
+        std::string d1 = !customDns1.empty() ? customDns1 : (lastPushedDns.size() > 0 ? lastPushedDns[0] : "1.1.1.1");
+        std::string d2 = !customDns2.empty() ? customDns2 : (lastPushedDns.size() > 1 ? lastPushedDns[1] : "8.8.8.8");
+        g_lwipTunnel->setDnsServers(d1, d2);
+        callbacks.log(3, "DNS configuration updated live: DNS1=%s, DNS2=%s", d1.c_str(), d2.c_str());
+    }
+}
+
 void TunnelEngine::onTunnelEstablished(const std::string& ip, int prefix, const std::string& gw,
                                       const std::vector<std::string>& dns) {
+    lastPushedDns = dns;
     std::string actualIp = ip.empty() ? "10.8.0.2" : ip;
     std::string actualGw = gw.empty() ? "10.8.0.1" : gw;
     int actualPrefix = (prefix <= 0 || prefix > 32) ? 24 : prefix;
@@ -782,7 +795,9 @@ void TunnelEngine::startLwip() {
     }
 
     /* Initial default configuration */
-    g_lwipTunnel->configure("10.8.0.2", 24, "10.8.0.1", "8.8.8.8", "1.1.1.1");
+    std::string d1 = !customDns1.empty() ? customDns1 : "1.1.1.1";
+    std::string d2 = !customDns2.empty() ? customDns2 : "8.8.8.8";
+    g_lwipTunnel->configure("10.8.0.2", 24, "10.8.0.1", d1, d2);
 
     /* Start lwIP event loop thread */
     lwipThread = std::thread(&TunnelEngine::lwipEventLoop, this);

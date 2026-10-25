@@ -108,10 +108,7 @@ public:
                 const std::string& deviceId = "");
     void disconnect();
     void destroy();
-    void setCustomDns(const std::string& dns1, const std::string& dns2) {
-        customDns1 = dns1;
-        customDns2 = dns2;
-    }
+    void setCustomDns(const std::string& dns1, const std::string& dns2);
 
     int openConnection(const std::string& host, int port, long callbackId);
     int sendData(int connId, const uint8_t* data, int offset, int length);
@@ -150,6 +147,7 @@ private:
     std::thread lwipThread;
     std::string customDns1;
     std::string customDns2;
+    std::vector<std::string> lastPushedDns;
 
     int tunFd[2] = {-1, -1};  /* socketpair: [0]=core side, [1]=lwip side */
     int vpnModeFd = -1;       /* Android OS tun interface fd (when in TUN mode) */

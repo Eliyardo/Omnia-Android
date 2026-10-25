@@ -110,6 +110,25 @@ void LwipTunnel::configure(const std::string& localIp, int prefixLen,
          dns1.c_str(), dns2.c_str());
 }
 
+void LwipTunnel::setDnsServers(const std::string& dns1, const std::string& dns2) {
+    std::lock_guard<std::recursive_mutex> lock(lwipMutex);
+    if (!initialized) return;
+
+    if (!dns1.empty()) {
+        ip_addr_t dnsAddr;
+        ipaddr_aton(dns1.c_str(), &dnsAddr);
+        dns_setserver(0, &dnsAddr);
+    }
+    if (!dns2.empty()) {
+        ip_addr_t dnsAddr;
+        ipaddr_aton(dns2.c_str(), &dnsAddr);
+        dns_setserver(1, &dnsAddr);
+    }
+
+    LOGI("lwIP DNS servers updated dynamically: DNS1=%s, DNS2=%s",
+         dns1.c_str(), dns2.c_str());
+}
+
 void LwipTunnel::poll() {
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
     if (!initialized) return;

@@ -85,7 +85,14 @@ fun MainScreen(viewModel: MainViewModel) {
     var showSettings by remember { mutableStateOf(false) }
     var showProfileManager by remember { mutableStateOf(false) }
     var showDisconnectConfirmDialog by remember { mutableStateOf(false) }
+    var isDisconnecting by remember { mutableStateOf(false) }
     var profileToEdit by remember { mutableStateOf<OvpnProfile?>(null) }
+
+    LaunchedEffect(tunnelState) {
+        if (tunnelState is TunnelState.Disconnected || tunnelState is TunnelState.Error) {
+            isDisconnecting = false
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -120,6 +127,7 @@ fun MainScreen(viewModel: MainViewModel) {
                 Button(
                     onClick = {
                         showDisconnectConfirmDialog = false
+                        isDisconnecting = true
                         viewModel.disconnect()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
@@ -353,12 +361,14 @@ fun MainScreen(viewModel: MainViewModel) {
                 tunnelState = tunnelState,
                 hasProfile = activeProfile != null,
                 isProxyMode = tunnelMode == AppSettings.TUNNEL_MODE_PROXY,
+                isDisconnectingExternal = isDisconnecting,
                 confirmOnDisconnect = confirmOnDisconnect,
                 onConnect = { viewModel.connect() },
                 onDisconnect = {
                     if (confirmOnDisconnect && tunnelState is TunnelState.Connected) {
                         showDisconnectConfirmDialog = true
                     } else {
+                        isDisconnecting = true
                         viewModel.disconnect()
                     }
                 }
@@ -588,6 +598,7 @@ fun HeroPowerButton(
     tunnelState: TunnelState,
     hasProfile: Boolean,
     isProxyMode: Boolean = true,
+    isDisconnectingExternal: Boolean = false,
     confirmOnDisconnect: Boolean = false,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
@@ -616,12 +627,12 @@ fun HeroPowerButton(
         }
     }
 
-    val isDisconnecting = isDisconnectingUser
+    val isDisconnecting = isDisconnectingUser || isDisconnectingExternal
     val isSpinning = isConnecting || isDisconnecting
 
     // Border and theme color transitions
     val targetBorderColor = when {
-        isDisconnecting -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.7f)
+        isDisconnecting -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.85f)
         isConnected -> StatusConnectedGreen
         isError -> MaterialTheme.colorScheme.error
         isConnecting -> MaterialTheme.colorScheme.tertiary
@@ -696,6 +707,24 @@ fun HeroPowerButton(
         }
     }
 
+    // Pulse dissipation & echo wave on disconnect
+    var wasConnected by remember { mutableStateOf(false) }
+    val disconnectPulseTransition = remember { Animatable(0f) }
+    LaunchedEffect(tunnelState, isDisconnecting) {
+        if (tunnelState is TunnelState.Connected) {
+            wasConnected = true
+        } else if (tunnelState is TunnelState.Disconnected && wasConnected) {
+            wasConnected = false
+            disconnectPulseTransition.snapTo(0f)
+            disconnectPulseTransition.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(750, easing = FastOutSlowInEasing)
+            )
+        } else if (tunnelState is TunnelState.Error) {
+            wasConnected = false
+        }
+    }
+
     // Highly responsive button scale bounce (handles touch press + state transitions)
     val buttonScale by animateFloatAsState(
         targetValue = when {
@@ -721,18 +750,24 @@ fun HeroPowerButton(
             contentAlignment = Alignment.Center,
             modifier = Modifier.size(buttonSize + 32.dp)
         ) {
-            // Ambient breathing halo when connected
-            if (isConnected && !isDisconnecting) {
+            // 1. Ambient breathing halo when connected (smoothly fades out rather than instantly cutting off)
+            val targetGlowAlpha = if (isConnected && !isDisconnecting) ambientGlowAlpha else 0f
+            val animatedGlowAlpha by animateFloatAsState(
+                targetValue = targetGlowAlpha,
+                animationSpec = tween(380, easing = FastOutSlowInEasing),
+                label = "animatedGlowAlpha"
+            )
+            if (animatedGlowAlpha > 0.001f) {
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                     drawCircle(
-                        color = StatusConnectedGreen.copy(alpha = ambientGlowAlpha),
-                        radius = (buttonSize.toPx() / 2f) + 10.dp.toPx() * (ambientGlowAlpha / 0.16f),
+                        color = StatusConnectedGreen.copy(alpha = animatedGlowAlpha),
+                        radius = (buttonSize.toPx() / 2f) + 10.dp.toPx() * (animatedGlowAlpha / 0.16f),
                         center = center
                     )
                 }
             }
 
-            // Pulse wave ring on connect
+            // 2. Pulse wave ring on connect (Green expanding power wave)
             if (connectPulseTransition.value > 0f && connectPulseTransition.value < 1f) {
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                     val progress = connectPulseTransition.value
@@ -745,6 +780,38 @@ fun HeroPowerButton(
                         radius = radius,
                         center = center,
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = stroke)
+                    )
+                }
+            }
+
+            // 3. Pulse dissipation & implosion ring on disconnect (Polished shutdown FX)
+            if (disconnectPulseTransition.value > 0f && disconnectPulseTransition.value < 1f) {
+                val progress = disconnectPulseTransition.value
+                val accentColor = MaterialTheme.colorScheme.secondary
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    // Outward expanding dissipation ring
+                    val outwardAlpha = ((1f - progress) * (1f - progress)).coerceIn(0f, 1f) * 0.38f
+                    val outwardStroke = 3.5.dp.toPx() * (1f - progress * 0.6f)
+                    val outwardRadius = (buttonSize.toPx() / 2f) + (18.dp.toPx() * progress)
+
+                    drawCircle(
+                        color = accentColor.copy(alpha = outwardAlpha),
+                        radius = outwardRadius,
+                        center = center,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = outwardStroke)
+                    )
+
+                    // Inward contracting echo ring (imploding into perimeter)
+                    val inwardProgress = 1f - progress
+                    val inwardAlpha = (inwardProgress * 0.20f).coerceIn(0f, 1f)
+                    val inwardRadius = (buttonSize.toPx() / 2f) + (8.dp.toPx() * inwardProgress)
+                    val inwardStroke = 2.dp.toPx() * inwardProgress
+
+                    drawCircle(
+                        color = accentColor.copy(alpha = inwardAlpha),
+                        radius = inwardRadius,
+                        center = center,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = inwardStroke)
                     )
                 }
             }
@@ -833,6 +900,15 @@ fun HeroPowerButton(
                                 width = strokeWidth,
                                 cap = androidx.compose.ui.graphics.StrokeCap.Round
                             )
+                        )
+                    }
+
+                    // 3. Subtle inner aura when actively disconnecting
+                    if (isDisconnecting) {
+                        drawCircle(
+                            color = borderColor.copy(alpha = 0.08f),
+                            radius = radius - strokeWidth,
+                            center = center
                         )
                     }
                 }
@@ -958,28 +1034,43 @@ fun BottomStatusCard(
             .height(116.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (tunnelState is TunnelState.Connected) {
-            var elapsedTime by remember { mutableLongStateOf(0L) }
+        val targetCardState = when {
+            tunnelState is TunnelState.Connected -> 1
+            tunnelState is TunnelState.Error -> 2
+            else -> 0
+        }
 
-            LaunchedEffect(tunnelState) {
-                val startTime = System.currentTimeMillis()
-                while (true) {
-                    elapsedTime = System.currentTimeMillis() - startTime
-                    delay(1000)
-                }
-            }
+        AnimatedContent(
+            targetState = targetCardState,
+            transitionSpec = {
+                (fadeIn(animationSpec = tween(280, delayMillis = 40)) + scaleIn(initialScale = 0.98f))
+                    .togetherWith(fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 0.98f))
+            },
+            label = "bottomStatusCardAnim"
+        ) { cardState ->
+            when (cardState) {
+                1 -> {
+                    var elapsedTime by remember { mutableLongStateOf(0L) }
 
-            Card(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outline,
-                        shape = RoundedCornerShape(16.dp)
-                    ),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
+                    LaunchedEffect(tunnelState) {
+                        val startTime = System.currentTimeMillis()
+                        while (true) {
+                            elapsedTime = System.currentTimeMillis() - startTime
+                            delay(1000)
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outline,
+                                shape = RoundedCornerShape(16.dp)
+                            ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1102,95 +1193,100 @@ fun BottomStatusCard(
                     }
                 }
             }
-        } else if (tunnelState is TunnelState.Error) {
-            Card(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(16.dp)
-                    ),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Error,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Connection Error",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-
-                    Text(
-                        text = tunnelState.message.ifEmpty { "Unable to connect to VPN server." },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(
-                            onClick = onRetry,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+        }
+        2 -> {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.5f),
+                                shape = RoundedCornerShape(16.dp)
+                            ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Retry Connection", color = MaterialTheme.colorScheme.error)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Error,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Connection Error",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+
+                            val errorMsg = (tunnelState as? TunnelState.Error)?.message.orEmpty()
+                            Text(
+                                text = errorMsg.ifEmpty { "Unable to connect to VPN server." },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(
+                                    onClick = onRetry,
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                                ) {
+                                    Text("Retry Connection", color = MaterialTheme.colorScheme.error)
+                                }
+                            }
                         }
                     }
                 }
-            }
-        } else {
-            // Disconnected / Idle informative prompt
-            Card(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        shape = RoundedCornerShape(16.dp)
-                    ),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        Icons.Default.Info,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    val promptText = if (tunnelMode == AppSettings.TUNNEL_MODE_PROXY) {
-                        "Proxy mode: Connects to OpenVPN and exposes 127.0.0.1:$socks5Port (SOCKS5) and :$httpPort (HTTP). Other apps use your normal network."
-                    } else {
-                        val splitText = if (splitEnabled) "${selectedApps.size} apps configured" else "all apps routed"
-                        "TUN mode: Routes Android system traffic through OpenVPN ($splitText). Local proxy ports inactive."
+                else -> {
+                    // Disconnected / Idle informative prompt
+                    Card(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .border(
+                                width = 1.dp,
+                                color = MaterialTheme.colorScheme.outlineVariant,
+                                shape = RoundedCornerShape(16.dp)
+                            ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            val promptText = if (tunnelMode == AppSettings.TUNNEL_MODE_PROXY) {
+                                "Proxy mode: Connects to OpenVPN and exposes 127.0.0.1:$socks5Port (SOCKS5) and :$httpPort (HTTP). Other apps use your normal network."
+                            } else {
+                                val splitText = if (splitEnabled) "${selectedApps.size} apps configured" else "all apps routed"
+                                "TUN mode: Routes Android system traffic through OpenVPN ($splitText). Local proxy ports inactive."
+                            }
+                            Text(
+                                text = promptText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                    Text(
-                        text = promptText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }

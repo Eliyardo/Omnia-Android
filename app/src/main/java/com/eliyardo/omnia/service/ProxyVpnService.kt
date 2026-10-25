@@ -186,9 +186,24 @@ class ProxyVpnService : VpnService() {
             launch { settings.upstreamProxyPassword.collect { cachedUpstreamProxyPassword = it } }
             launch { settings.upstreamProxyAllowCleartext.collect { cachedUpstreamProxyAllowCleartext = it } }
             launch { settings.deviceId.collect { cachedDeviceId = it } }
-            launch { settings.dnsProvider.collect { cachedDnsProvider = it } }
-            launch { settings.customDnsPrimary.collect { cachedCustomDnsPrimary = it } }
-            launch { settings.customDnsSecondary.collect { cachedCustomDnsSecondary = it } }
+            launch {
+                settings.dnsProvider.collect {
+                    cachedDnsProvider = it
+                    applyDnsSettings()
+                }
+            }
+            launch {
+                settings.customDnsPrimary.collect {
+                    cachedCustomDnsPrimary = it
+                    applyDnsSettings()
+                }
+            }
+            launch {
+                settings.customDnsSecondary.collect {
+                    cachedCustomDnsSecondary = it
+                    applyDnsSettings()
+                }
+            }
             launch { settings.splitTunnelEnabled.collect { cachedSplitTunnelEnabled = it } }
             launch { settings.splitTunnelMode.collect { cachedSplitTunnelMode = it } }
             launch { settings.splitTunnelApps.collect { cachedSplitTunnelApps = it } }

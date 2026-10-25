@@ -3,7 +3,6 @@ package com.eliyardo.omnia.ui
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -441,9 +440,7 @@ fun SettingsScreen(
 
                 // Proxy Authentication
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -478,12 +475,12 @@ fun SettingsScreen(
 
                     AnimatedVisibility(
                         visible = proxyAuthEnabled,
-                        enter = fadeIn(animationSpec = tween(200)) + expandVertically(
-                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                        enter = fadeIn(animationSpec = tween(120)) + expandVertically(
+                            animationSpec = tween(180, easing = FastOutSlowInEasing),
                             expandFrom = Alignment.Top
                         ),
-                        exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(
-                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                        exit = fadeOut(animationSpec = tween(80)) + shrinkVertically(
+                            animationSpec = tween(180, easing = FastOutSlowInEasing),
                             shrinkTowards = Alignment.Top
                         )
                     ) {
@@ -568,9 +565,7 @@ fun SettingsScreen(
 
                 // Upstream HTTP Proxy
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .animateContentSize(animationSpec = tween(280, easing = FastOutSlowInEasing))
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -607,12 +602,12 @@ fun SettingsScreen(
 
                     AnimatedVisibility(
                         visible = upstreamProxyEnabled,
-                        enter = fadeIn(animationSpec = tween(200)) + expandVertically(
-                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                        enter = fadeIn(animationSpec = tween(120)) + expandVertically(
+                            animationSpec = tween(180, easing = FastOutSlowInEasing),
                             expandFrom = Alignment.Top
                         ),
-                        exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(
-                            animationSpec = tween(280, easing = FastOutSlowInEasing),
+                        exit = fadeOut(animationSpec = tween(80)) + shrinkVertically(
+                            animationSpec = tween(180, easing = FastOutSlowInEasing),
                             shrinkTowards = Alignment.Top
                         )
                     ) {

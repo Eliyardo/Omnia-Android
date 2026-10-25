@@ -47,6 +47,9 @@ public:
                    const std::string& gateway,
                    const std::string& dns1, const std::string& dns2);
 
+    /* Dynamically update DNS servers without reconfiguring the virtual interface */
+    void setDnsServers(const std::string& dns1, const std::string& dns2);
+
     /* Create a new outbound TCP connection through the tunnel */
     int connectTcp(int connId, const std::string& host, int port);
 
