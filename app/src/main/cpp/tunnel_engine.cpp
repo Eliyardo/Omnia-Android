@@ -359,8 +359,12 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
         } else if (securityLevel == "insecure") {
             config.enableLegacyAlgorithms = true;
             config.enableNonPreferredDCAlgorithms = true;
+#ifdef OPENVPN_ALLOW_INSECURE_CERTPROFILE
+            config.tlsCertProfileOverride = "insecure";
+#else
             config.tlsCertProfileOverride = "legacy";
-            callbacks.log(2, "Security Level: Insecure (Permits BF-CBC, 3DES, DES, RC4, MD5, and compression)");
+#endif
+            callbacks.log(2, "Security Level: Insecure (Permits legacy ciphers, weak digests, and insecure certificates)");
         } else {
             // Default: "legacy"
             config.enableLegacyAlgorithms = true;

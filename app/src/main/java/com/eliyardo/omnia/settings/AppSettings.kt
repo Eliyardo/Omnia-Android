@@ -153,9 +153,7 @@ class AppSettings(private val context: Context) {
 
     val vpnProtocolOverride: Flow<String> = context.dataStore.data.map { it[VPN_PROTOCOL_OVERRIDE] ?: PROTO_ADAPTIVE }
     val connectionTimeout: Flow<Int> = context.dataStore.data.map { it[CONNECTION_TIMEOUT] ?: TIMEOUT_1M }
-    val securityLevel: Flow<String> = context.dataStore.data.map { pref ->
-        pref[SECURITY_LEVEL] ?: if (pref[LEGACY_CRYPTO] == true) SECURITY_LEVEL_LEGACY else SECURITY_LEVEL_LEGACY
-    }
+    val securityLevel: Flow<String> = context.dataStore.data.map { it[SECURITY_LEVEL] ?: SECURITY_LEVEL_LEGACY }
     val enforceTls13: Flow<Boolean> = context.dataStore.data.map { it[ENFORCE_TLS_1_3] ?: false }
     val confirmOnDisconnect: Flow<Boolean> = context.dataStore.data.map { it[CONFIRM_ON_DISCONNECT] ?: false }
     val bypassLanTun: Flow<Boolean> = context.dataStore.data.map { it[BYPASS_LAN_TUN] ?: true }
@@ -268,7 +266,10 @@ class AppSettings(private val context: Context) {
     }
     
     suspend fun setLegacyCrypto(enabled: Boolean) {
-        context.dataStore.edit { it[LEGACY_CRYPTO] = enabled }
+        context.dataStore.edit {
+            it[LEGACY_CRYPTO] = enabled
+            it[SECURITY_LEVEL] = if (enabled) SECURITY_LEVEL_LEGACY else SECURITY_LEVEL_PREFERRED
+        }
     }
 
     suspend fun setSplitTunnelEnabled(enabled: Boolean) {
