@@ -1,5 +1,6 @@
 package com.eliyardo.omnia.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -27,7 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -58,6 +63,9 @@ fun SettingsScreen(
         return
     }
 
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+
     val themeMode by viewModel.themeMode.collectAsState()
     val tunnelMode by viewModel.tunnelMode.collectAsState()
     val socks5Port by viewModel.settings.socks5Port.collectAsState(initial = AppSettings.DEFAULT_SOCKS5_PORT)
@@ -78,6 +86,22 @@ fun SettingsScreen(
     val isSplitEnabled by viewModel.settings.splitTunnelEnabled.collectAsState(initial = false)
     val selectedApps by viewModel.settings.splitTunnelApps.collectAsState(initial = emptySet())
 
+    val vpnProtocolOverride by viewModel.settings.vpnProtocolOverride.collectAsState(initial = AppSettings.PROTO_ADAPTIVE)
+    val connectionTimeout by viewModel.settings.connectionTimeout.collectAsState(initial = AppSettings.TIMEOUT_1M)
+    val securityLevel by viewModel.settings.securityLevel.collectAsState(initial = AppSettings.SECURITY_LEVEL_LEGACY)
+    val enforceTls13 by viewModel.settings.enforceTls13.collectAsState(initial = false)
+    val confirmOnDisconnect by viewModel.settings.confirmOnDisconnect.collectAsState(initial = false)
+    val bypassLanTun by viewModel.settings.bypassLanTun.collectAsState(initial = true)
+
+    val upstreamProxyEnabled by viewModel.settings.upstreamProxyEnabled.collectAsState(initial = false)
+    val upstreamProxyHost by viewModel.settings.upstreamProxyHost.collectAsState(initial = "")
+    val upstreamProxyPort by viewModel.settings.upstreamProxyPort.collectAsState(initial = 8080)
+    val upstreamProxyUsername by viewModel.settings.upstreamProxyUsername.collectAsState(initial = "")
+    val upstreamProxyPassword by viewModel.settings.upstreamProxyPassword.collectAsState(initial = "")
+    val upstreamProxyAllowCleartext by viewModel.settings.upstreamProxyAllowCleartext.collectAsState(initial = true)
+
+    val deviceId by viewModel.settings.deviceId.collectAsState(initial = "")
+
     var showLanAuthDialog by remember { mutableStateOf(false) }
 
     var socks5PortText by remember(socks5Port) { mutableStateOf(socks5Port.toString()) }
@@ -87,6 +111,11 @@ fun SettingsScreen(
     var customPrimaryText by remember(customDnsPrimary) { mutableStateOf(customDnsPrimary) }
     var customSecondaryText by remember(customDnsSecondary) { mutableStateOf(customDnsSecondary) }
     var reconnectDelayText by remember(reconnectDelay) { mutableStateOf(reconnectDelay.toString()) }
+
+    var upstreamHostText by remember(upstreamProxyHost) { mutableStateOf(upstreamProxyHost) }
+    var upstreamPortText by remember(upstreamProxyPort) { mutableStateOf(upstreamProxyPort.toString()) }
+    var upstreamUserText by remember(upstreamProxyUsername) { mutableStateOf(upstreamProxyUsername) }
+    var upstreamPassText by remember(upstreamProxyPassword) { mutableStateOf(upstreamProxyPassword) }
 
     Scaffold(
         topBar = {
@@ -294,6 +323,34 @@ fun SettingsScreen(
                             )
                         }
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    // Bypass Local LAN Switch
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Bypass Local LAN",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Exclude local network traffic (IPv4 private subnets & IPv6 local links) so local devices and printers remain accessible",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = bypassLanTun,
+                            onCheckedChange = { enabled ->
+                                scope.launch { viewModel.settings.setBypassLanTun(enabled) }
+                            }
+                        )
+                    }
                 }
             }
 
@@ -486,6 +543,166 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // Upstream HTTP Proxy
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Upstream HTTP Proxy",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Route VPN tunnel connection through an upstream HTTP proxy",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = upstreamProxyEnabled,
+                        onCheckedChange = { enabled ->
+                            scope.launch {
+                                viewModel.settings.setUpstreamProxy(
+                                    enabled = enabled,
+                                    host = upstreamHostText,
+                                    port = upstreamPortText.toIntOrNull() ?: 8080,
+                                    username = upstreamUserText,
+                                    password = upstreamPassText
+                                )
+                            }
+                        }
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = upstreamProxyEnabled,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = upstreamHostText,
+                                onValueChange = { v ->
+                                    upstreamHostText = v
+                                    scope.launch {
+                                        viewModel.settings.setUpstreamProxy(
+                                            enabled = upstreamProxyEnabled,
+                                            host = v
+                                        )
+                                    }
+                                },
+                                label = { Text("Proxy Host / IP") },
+                                placeholder = { Text("192.168.1.100") },
+                                singleLine = true,
+                                modifier = Modifier.weight(2f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+
+                            OutlinedTextField(
+                                value = upstreamPortText,
+                                onValueChange = { v ->
+                                    upstreamPortText = v
+                                    v.toIntOrNull()?.let { p ->
+                                        if (p in 1..65535) {
+                                            scope.launch {
+                                                viewModel.settings.setUpstreamProxy(
+                                                    enabled = upstreamProxyEnabled,
+                                                    port = p
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                label = { Text("Port") },
+                                placeholder = { Text("8080") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = upstreamUserText,
+                            onValueChange = { v ->
+                                upstreamUserText = v
+                                scope.launch {
+                                    viewModel.settings.setUpstreamProxy(
+                                        enabled = upstreamProxyEnabled,
+                                        username = v
+                                    )
+                                }
+                            },
+                            label = { Text("Username (Optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        OutlinedTextField(
+                            value = upstreamPassText,
+                            onValueChange = { v ->
+                                upstreamPassText = v
+                                scope.launch {
+                                    viewModel.settings.setUpstreamProxy(
+                                        enabled = upstreamProxyEnabled,
+                                        password = v
+                                    )
+                                }
+                            },
+                            label = { Text("Password (Optional)") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Allow Cleartext Authentication",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "Permits HTTP Basic authentication headers",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = upstreamProxyAllowCleartext,
+                                onCheckedChange = { allowed ->
+                                    scope.launch {
+                                        viewModel.settings.setUpstreamProxy(
+                                            enabled = upstreamProxyEnabled,
+                                            allowCleartext = allowed
+                                        )
+                                    }
+                                }
+                            )
                         }
                     }
                 }
@@ -683,39 +900,244 @@ fun SettingsScreen(
                 }
             }
 
-            // ================= SECTION 6: OPENVPN COMPATIBILITY =================
+            // ================= SECTION 6: OPENVPN COMPATIBILITY & PROTOCOL =================
             SettingsSectionCard(
                 icon = Icons.Default.VpnKey,
-                title = "OpenVPN Core & Compatibility",
-                subtitle = "Engine parameters & legacy algorithm support"
+                title = "OpenVPN Core & Protocol",
+                subtitle = "Transport protocol, timeouts, security levels & MDM"
             ) {
+                // 1. Protocol Override
+                Text(
+                    text = "VPN Protocol Override",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Select transport protocol or let engine adapt automatically",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val protoOptions = listOf(
+                    Triple(AppSettings.PROTO_ADAPTIVE, "Adaptive (Default)", "Tries UDP first, seamlessly falls back to TCP"),
+                    Triple(AppSettings.PROTO_DEFAULT, "Config Default", "Strictly uses the protocol declared in the .ovpn profile"),
+                    Triple(AppSettings.PROTO_UDP, "Force UDP", "Fastest speed and lowest latency"),
+                    Triple(AppSettings.PROTO_TCP, "Force TCP", "Bypasses restrictive network firewalls")
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    protoOptions.forEach { (proto, title, desc) ->
+                        val selected = vpnProtocolOverride == proto
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    scope.launch { viewModel.settings.setVpnProtocolOverride(proto) }
+                                },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+                            border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selected,
+                                    onClick = { scope.launch { viewModel.settings.setVpnProtocolOverride(proto) } },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 2. Connection Timeout & Continuous Retry
+                Text(
+                    text = "Connection Timeout",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Maximum time to establish connection before timing out",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val timeoutOptions = listOf(
+                    Pair(AppSettings.TIMEOUT_10S, "10s"),
+                    Pair(AppSettings.TIMEOUT_30S, "30s"),
+                    Pair(AppSettings.TIMEOUT_1M, "1m (Default)"),
+                    Pair(AppSettings.TIMEOUT_2M, "2m"),
+                    Pair(AppSettings.TIMEOUT_CONTINUOUS, "Continuous")
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    timeoutOptions.forEach { (sec, label) ->
+                        val isSelected = connectionTimeout == sec
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    scope.launch { viewModel.settings.setConnectionTimeout(sec) }
+                                },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 3. Cryptographic Security Level (3-Tier)
+                Text(
+                    text = "Cryptographic Security Level",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Controls cipher strength and legacy algorithm acceptance",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val secLevels = listOf(
+                    Triple(
+                        AppSettings.SECURITY_LEVEL_PREFERRED,
+                        "Preferred (High Security)",
+                        "Modern ciphers only (AES-GCM, ChaCha20). Rejects SHA-1 digests and weak ciphers."
+                    ),
+                    Triple(
+                        AppSettings.SECURITY_LEVEL_LEGACY,
+                        "Legacy (Default)",
+                        "Recommended. Allows AES-CBC, BF-CBC, and SHA-1 digests for maximum server compatibility."
+                    ),
+                    Triple(
+                        AppSettings.SECURITY_LEVEL_INSECURE,
+                        "Insecure",
+                        "Accepts older insecure TLS certificates and legacy cipher suites without strict validation."
+                    )
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    secLevels.forEach { (level, title, desc) ->
+                        val selected = securityLevel == level
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    scope.launch { viewModel.settings.setSecurityLevel(level) }
+                                },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+                            border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selected,
+                                    onClick = { scope.launch { viewModel.settings.setSecurityLevel(level) } },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 4. Enforce TLS 1.3
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Legacy Cryptography",
+                            text = "Enforce TLS 1.3",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Permits legacy ciphers (AES-CBC, Blowfish) and SHA-1 digests for compatibility with all OpenVPN configs",
+                            text = "Require TLS 1.3 for handshake. Connection will fail if server does not support TLS 1.3.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
-                        checked = legacyCrypto,
+                        checked = enforceTls13,
                         onCheckedChange = { enabled ->
-                            scope.launch { viewModel.settings.setLegacyCrypto(enabled) }
+                            scope.launch { viewModel.settings.setEnforceTls13(enabled) }
                         }
                     )
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                // 5. Auto-Reconnect
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -762,6 +1184,7 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
+                // 6. Kill Switch
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -785,6 +1208,91 @@ fun SettingsScreen(
                             scope.launch { viewModel.settings.setBlockTrafficOnDrop(enabled) }
                         }
                     )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 7. Confirm on Disconnect
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Confirm on Disconnect",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Show confirmation dialog before terminating active connection",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = confirmOnDisconnect,
+                        onCheckedChange = { enabled ->
+                            scope.launch { viewModel.settings.setConfirmOnDisconnect(enabled) }
+                        }
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                // 8. Device ID (Hardware UUID for MDM policies)
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Device Identifier (Hardware UUID)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Persistent client UUID passed to server for MDM device verification",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                if (deviceId.isNotBlank()) {
+                                    clipboardManager.setText(AnnotatedString(deviceId))
+                                    Toast.makeText(context, "Device ID copied to clipboard", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = "Copy Device ID",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Text(
+                            text = deviceId.ifBlank { "Generating..." },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
                 }
             }
 

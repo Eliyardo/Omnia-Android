@@ -31,19 +31,41 @@ JNIEXPORT jint JNICALL
 Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeConnect(
         JNIEnv* env, jobject /*thiz*/,
         jlong handle, jstring profile, jstring username, jstring password,
-        jboolean isTunMode, jboolean legacyCrypto, jboolean ipv6Enabled, jboolean allowLan) {
+        jboolean isTunMode,
+        jstring securityLevel, jboolean enforceTls13,
+        jstring protoOverride, jint connTimeout,
+        jboolean ipv6Enabled, jboolean bypassLanTun,
+        jstring upstreamProxyHost, jint upstreamProxyPort,
+        jstring upstreamProxyUser, jstring upstreamProxyPass,
+        jboolean upstreamProxyAllowCleartext,
+        jstring deviceId) {
     auto* engine = reinterpret_cast<TunnelEngine*>(handle);
     if (!engine) return -1;
 
     std::string prof = jstringToString(env, profile);
     std::string user = jstringToString(env, username);
     std::string pass = jstringToString(env, password);
+    std::string secLevel = jstringToString(env, securityLevel);
+    std::string proto = jstringToString(env, protoOverride);
+    std::string upHost = jstringToString(env, upstreamProxyHost);
+    std::string upUser = jstringToString(env, upstreamProxyUser);
+    std::string upPass = jstringToString(env, upstreamProxyPass);
+    std::string devId = jstringToString(env, deviceId);
 
     return engine->connect(prof, user, pass,
                            isTunMode == JNI_TRUE,
-                           legacyCrypto == JNI_TRUE,
+                           secLevel,
+                           enforceTls13 == JNI_TRUE,
+                           proto,
+                           (int)connTimeout,
                            ipv6Enabled == JNI_TRUE,
-                           allowLan == JNI_TRUE);
+                           bypassLanTun == JNI_TRUE,
+                           upHost,
+                           (int)upstreamProxyPort,
+                           upUser,
+                           upPass,
+                           upstreamProxyAllowCleartext == JNI_TRUE,
+                           devId);
 }
 
 JNIEXPORT void JNICALL

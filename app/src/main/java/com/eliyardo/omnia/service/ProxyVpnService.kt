@@ -76,10 +76,21 @@ class ProxyVpnService : VpnService() {
 
     // Cached settings to prevent blocking calls on JNI/OpenVPN native threads
     private var cachedTunnelMode: String = AppSettings.TUNNEL_MODE_TUN
-    private var cachedLegacyCrypto: Boolean = false
+    private var cachedSecurityLevel: String = AppSettings.SECURITY_LEVEL_LEGACY
+    private var cachedEnforceTls13: Boolean = false
+    private var cachedVpnProtocolOverride: String = AppSettings.PROTO_ADAPTIVE
+    private var cachedConnectionTimeout: Int = AppSettings.TIMEOUT_1M
     private var cachedIpv6Enabled: Boolean = true
     private var cachedAllowLan: Boolean = false
+    private var cachedBypassLanTun: Boolean = true
     private var cachedBlockTrafficOnDrop: Boolean = true
+    private var cachedUpstreamProxyEnabled: Boolean = false
+    private var cachedUpstreamProxyHost: String = ""
+    private var cachedUpstreamProxyPort: Int = 8080
+    private var cachedUpstreamProxyUsername: String = ""
+    private var cachedUpstreamProxyPassword: String = ""
+    private var cachedUpstreamProxyAllowCleartext: Boolean = true
+    private var cachedDeviceId: String = ""
     private var cachedDnsProvider: String = AppSettings.DNS_PROVIDER_SERVER
     private var cachedCustomDnsPrimary: String = ""
     private var cachedCustomDnsSecondary: String = ""
@@ -160,10 +171,21 @@ class ProxyVpnService : VpnService() {
         listenersJob?.cancel()
         listenersJob = serviceScope.launch {
             launch { settings.tunnelMode.collect { cachedTunnelMode = it } }
-            launch { settings.legacyCrypto.collect { cachedLegacyCrypto = it } }
+            launch { settings.securityLevel.collect { cachedSecurityLevel = it } }
+            launch { settings.enforceTls13.collect { cachedEnforceTls13 = it } }
+            launch { settings.vpnProtocolOverride.collect { cachedVpnProtocolOverride = it } }
+            launch { settings.connectionTimeout.collect { cachedConnectionTimeout = it } }
             launch { settings.ipv6Enabled.collect { cachedIpv6Enabled = it } }
             launch { settings.allowLan.collect { cachedAllowLan = it } }
+            launch { settings.bypassLanTun.collect { cachedBypassLanTun = it } }
             launch { settings.blockTrafficOnDrop.collect { cachedBlockTrafficOnDrop = it } }
+            launch { settings.upstreamProxyEnabled.collect { cachedUpstreamProxyEnabled = it } }
+            launch { settings.upstreamProxyHost.collect { cachedUpstreamProxyHost = it } }
+            launch { settings.upstreamProxyPort.collect { cachedUpstreamProxyPort = it } }
+            launch { settings.upstreamProxyUsername.collect { cachedUpstreamProxyUsername = it } }
+            launch { settings.upstreamProxyPassword.collect { cachedUpstreamProxyPassword = it } }
+            launch { settings.upstreamProxyAllowCleartext.collect { cachedUpstreamProxyAllowCleartext = it } }
+            launch { settings.deviceId.collect { cachedDeviceId = it } }
             launch { settings.dnsProvider.collect { cachedDnsProvider = it } }
             launch { settings.customDnsPrimary.collect { cachedCustomDnsPrimary = it } }
             launch { settings.customDnsSecondary.collect { cachedCustomDnsSecondary = it } }
@@ -237,16 +259,38 @@ class ProxyVpnService : VpnService() {
                         applyDnsSettings()
 
                         val isTunMode = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
-                        val legacyCrypto = settings.legacyCrypto.first()
+                        val securityLevel = settings.securityLevel.first()
+                        val enforceTls13 = settings.enforceTls13.first()
+                        val protoOverride = settings.vpnProtocolOverride.first()
+                        val connTimeout = settings.connectionTimeout.first()
                         val ipv6Enabled = settings.ipv6Enabled.first()
                         val allowLan = settings.allowLan.first()
+                        val bypassLanTun = settings.bypassLanTun.first()
+                        val upstreamProxyEnabled = settings.upstreamProxyEnabled.first()
+                        val upstreamProxyHost = if (upstreamProxyEnabled) settings.upstreamProxyHost.first() else ""
+                        val upstreamProxyPort = if (upstreamProxyEnabled) settings.upstreamProxyPort.first() else 0
+                        val upstreamProxyUser = if (upstreamProxyEnabled) settings.upstreamProxyUsername.first() else ""
+                        val upstreamProxyPass = if (upstreamProxyEnabled) settings.upstreamProxyPassword.first() else ""
+                        val upstreamProxyCleartext = settings.upstreamProxyAllowCleartext.first()
+                        val deviceId = settings.getOrCreateDeviceId()
 
                         cachedTunnelMode = if (isTunMode) AppSettings.TUNNEL_MODE_TUN else AppSettings.TUNNEL_MODE_PROXY
-                        cachedLegacyCrypto = legacyCrypto
+                        cachedSecurityLevel = securityLevel
+                        cachedEnforceTls13 = enforceTls13
+                        cachedVpnProtocolOverride = protoOverride
+                        cachedConnectionTimeout = connTimeout
                         cachedIpv6Enabled = ipv6Enabled
                         cachedAllowLan = allowLan
+                        cachedBypassLanTun = bypassLanTun
+                        cachedUpstreamProxyEnabled = upstreamProxyEnabled
+                        cachedUpstreamProxyHost = upstreamProxyHost
+                        cachedUpstreamProxyPort = upstreamProxyPort
+                        cachedUpstreamProxyUsername = upstreamProxyUser
+                        cachedUpstreamProxyPassword = upstreamProxyPass
+                        cachedUpstreamProxyAllowCleartext = upstreamProxyCleartext
+                        cachedDeviceId = deviceId
 
-                        Log.i(TAG, "Starting connection: isTunMode=$isTunMode legacyCrypto=$legacyCrypto ipv6Enabled=$ipv6Enabled allowLan=$allowLan")
+                        Log.i(TAG, "Starting connection: isTunMode=$isTunMode secLevel=$securityLevel tls13=$enforceTls13 proto=$protoOverride timeout=$connTimeout ipv6=$ipv6Enabled bypassLanTun=$bypassLanTun")
 
                         // Clean up cross-mode state before connecting
                         if (!isTunMode) {
@@ -267,9 +311,18 @@ class ProxyVpnService : VpnService() {
                                     username = username,
                                     password = password,
                                     isTunMode = isTunMode,
-                                    legacyCrypto = legacyCrypto,
+                                    securityLevel = securityLevel,
+                                    enforceTls13 = enforceTls13,
+                                    protoOverride = protoOverride,
+                                    connTimeout = connTimeout,
                                     ipv6Enabled = ipv6Enabled,
-                                    allowLan = allowLan
+                                    bypassLanTun = bypassLanTun,
+                                    upstreamProxyHost = upstreamProxyHost,
+                                    upstreamProxyPort = upstreamProxyPort,
+                                    upstreamProxyUser = upstreamProxyUser,
+                                    upstreamProxyPass = upstreamProxyPass,
+                                    upstreamProxyAllowCleartext = upstreamProxyCleartext,
+                                    deviceId = deviceId
                                 )
                             }
                         }
@@ -365,7 +418,17 @@ class ProxyVpnService : VpnService() {
 
             // API 33+ Excluded Routes (e.g. bypassing local subnets or bypass-dhcp)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                for (ex in excludedRoutes) {
+                val toExclude = mutableSetOf<String>()
+                toExclude.addAll(excludedRoutes)
+                if (cachedBypassLanTun) {
+                    toExclude.add("10.0.0.0/8")
+                    toExclude.add("172.16.0.0/12")
+                    toExclude.add("192.168.0.0/16")
+                    toExclude.add("169.254.0.0/16")
+                    toExclude.add("fc00::/7")
+                    toExclude.add("fe80::/10")
+                }
+                for (ex in toExclude) {
                     try {
                         val parts = ex.split("/")
                         if (parts.size == 2) {
@@ -590,18 +653,38 @@ class ProxyVpnService : VpnService() {
                     lastProfileContent?.let {
                         applyDnsSettings()
                         val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
-                        val legacyCrypto = settings.legacyCrypto.first()
+                        val securityLevel = settings.securityLevel.first()
+                        val enforceTls13 = settings.enforceTls13.first()
+                        val protoOverride = settings.vpnProtocolOverride.first()
+                        val connTimeout = settings.connectionTimeout.first()
                         val ipv6Enabled = settings.ipv6Enabled.first()
-                        val allowLan = settings.allowLan.first()
+                        val bypassLanTun = settings.bypassLanTun.first()
+                        val upstreamProxyEnabled = settings.upstreamProxyEnabled.first()
+                        val upstreamProxyHost = if (upstreamProxyEnabled) settings.upstreamProxyHost.first() else ""
+                        val upstreamProxyPort = if (upstreamProxyEnabled) settings.upstreamProxyPort.first() else 0
+                        val upstreamProxyUser = if (upstreamProxyEnabled) settings.upstreamProxyUsername.first() else ""
+                        val upstreamProxyPass = if (upstreamProxyEnabled) settings.upstreamProxyPassword.first() else ""
+                        val upstreamProxyCleartext = settings.upstreamProxyAllowCleartext.first()
+                        val deviceId = settings.getOrCreateDeviceId()
+
                         withContext(Dispatchers.IO) {
                             tunnelEngine.connect(
                                 profileContent = it,
                                 username = lastUsername,
                                 password = lastPassword,
                                 isTunMode = isTun,
-                                legacyCrypto = legacyCrypto,
+                                securityLevel = securityLevel,
+                                enforceTls13 = enforceTls13,
+                                protoOverride = protoOverride,
+                                connTimeout = connTimeout,
                                 ipv6Enabled = ipv6Enabled,
-                                allowLan = allowLan
+                                bypassLanTun = bypassLanTun,
+                                upstreamProxyHost = upstreamProxyHost,
+                                upstreamProxyPort = upstreamProxyPort,
+                                upstreamProxyUser = upstreamProxyUser,
+                                upstreamProxyPass = upstreamProxyPass,
+                                upstreamProxyAllowCleartext = upstreamProxyCleartext,
+                                deviceId = deviceId
                             )
                         }
                     }

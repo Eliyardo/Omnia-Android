@@ -10,7 +10,7 @@ An OpenVPN client for Android featuring userspace proxy and system-wide VPN tunn
 
 The application provides two distinct operational modes:
 1. **Local Proxy Mode**: Establishes an encrypted OpenVPN tunnel entirely within userspace using lwIP. It exposes local **SOCKS5** (default port `10880`) and **HTTP CONNECT** (default port `10890`) proxy interfaces without acquiring Android `VpnService` permissions, creating a virtual TUN device, or altering system network routes.
-2. **TUN Mode (System-Wide VPN)**: Implements Android `VpnService` to route device-level network traffic through the OpenVPN tunnel, supporting per-application routing policies and dual-stack IPv4/IPv6 leak protection.
+2. **TUN Mode (System-Wide VPN)**: Implements Android `VpnService` to route device-level network traffic through the OpenVPN tunnel, supporting per-application routing policies, dual-stack IPv4/IPv6 leak protection, and local LAN bypass.
 
 ---
 
@@ -20,17 +20,24 @@ The application provides two distinct operational modes:
 - **Local Proxy Mode**: Routes application traffic through local SOCKS5 (RFC 1928) and HTTP CONNECT proxy servers. System-wide network traffic remains unaffected.
 - **TUN Mode (System-Wide VPN)**: Uses Android's `VpnService` to provide system-level VPN coverage across all network interfaces.
 
-### Application Routing
+### Application Routing & Network Integration
 - **Per-App Routing**: Configures which installed applications route through the VPN tunnel or bypass it directly (available in TUN mode).
+- **Bypass Local LAN**: Excludes RFC 1918 private IPv4 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`) and local IPv6 subnets (`fc00::/7`, `fe80::/10`) in TUN mode so printers and local network services remain accessible.
+- **Upstream HTTP Proxy**: Supports upstream HTTP CONNECT proxies with optional Basic authentication for traversing corporate gateways and network firewalls (compatible with both TUN and Proxy modes).
 
 ### Profile and Credential Management
 - **Configuration Import**: Parses standard `.ovpn` configuration files with support for inline certificates (`<ca>`, `<cert>`, `<key>`, `<tls-auth>`, `<tls-crypt>`).
 - **Encrypted Storage**: Stores configuration profiles and sensitive authentication credentials using AES-256-GCM encryption backed by Android Keystore and Android Jetpack Security.
 - **In-App Profile Editing**: Allows manual modification of remote hostnames, ports, transport protocols (UDP/TCP), and credentials directly within the application with failover remotes preserved.
+- **Device ID (MDM Hardware UUID)**: Generates and passes a persistent client hardware UUID to OpenVPN servers for enterprise device management (MDM) verification policies.
 
-### Cryptographic Support
+### Cryptographic Support & Transport Protocols
 - **OpenVPN 3 Core Engine**: Uses the modern OpenVPN 3 C++ client library with OpenSSL 3.
-- **Legacy Cipher Fallback**: Opt-in legacy cipher negotiation (BF-CBC, DES, 3DES, CAST5) disabled by default for modern cryptographic security.
+- **3-Tier Cryptographic Security Level**: Select between Preferred (high security, modern ciphers only, rejects SHA-1), Legacy (default compatibility for older servers), and Insecure.
+- **Enforce TLS 1.3**: Optional switch to enforce TLS 1.3 minimum handshake negotiation.
+- **Protocol Override**: Choose between Adaptive (UDP with seamless TCP failover), Config Default, Force UDP, or Force TCP.
+- **Connection Timeout & Continuous Retry**: Configurable timeout (10s, 30s, 1m default, 2m, or Continuous retry).
+- **Confirmation on Disconnect**: Optional prompt before terminating active connections to prevent accidental disconnection.
 
 ### DNS Management
 - **DNS Modes**: Supports server-pushed DNS servers with options to configure custom upstream DNS resolvers (e.g., Cloudflare, Google, or custom addresses).
@@ -141,10 +148,10 @@ cd Omnia-Android
 
 Build outputs are located in:
 `app/build/outputs/apk/release/`
-- `Omnia-1.0.7-arm64-v8a-release.apk`
-- `Omnia-1.0.7-armeabi-v7a-release.apk`
-- `Omnia-1.0.7-x86_64-release.apk`
-- `Omnia-1.0.7-universal-release.apk`
+- `Omnia-1.1.0-arm64-v8a-release.apk`
+- `Omnia-1.1.0-armeabi-v7a-release.apk`
+- `Omnia-1.1.0-x86_64-release.apk`
+- `Omnia-1.1.0-universal-release.apk`
 
 ---
 

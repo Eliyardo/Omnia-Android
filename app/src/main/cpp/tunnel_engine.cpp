@@ -260,7 +260,14 @@ bool TunnelEngine::initialize(JNIEnv* env, jobject engineObj) {
 }
 
 int TunnelEngine::connect(const std::string& profile, const std::string& username, const std::string& password,
-                          bool isTunMode, bool legacyCrypto, bool ipv6Enabled, bool allowLan) {
+                          bool isTunMode,
+                          const std::string& securityLevel, bool enforceTls13,
+                          const std::string& protoOverride, int connTimeout,
+                          bool ipv6Enabled, bool bypassLanTun,
+                          const std::string& upstreamProxyHost, int upstreamProxyPort,
+                          const std::string& upstreamProxyUser, const std::string& upstreamProxyPass,
+                          bool upstreamProxyAllowCleartext,
+                          const std::string& deviceId) {
     if (running.load()) {
         disconnect();
     }
@@ -317,14 +324,24 @@ int TunnelEngine::connect(const std::string& profile, const std::string& usernam
     /* Launch OpenVPN 3 Core client on clientFd */
     ovpnClient = std::make_unique<OpenVpnClientImpl>(this, clientFd);
     ovpnThread = std::thread(&TunnelEngine::runOpenVpn, this, profile, username, password,
-                             legacyCrypto, ipv6Enabled, allowLan);
+                             securityLevel, enforceTls13, protoOverride, connTimeout,
+                             ipv6Enabled, bypassLanTun,
+                             upstreamProxyHost, upstreamProxyPort,
+                             upstreamProxyUser, upstreamProxyPass,
+                             upstreamProxyAllowCleartext, deviceId);
     statsThread = std::thread(&TunnelEngine::statsLoop, this);
 
     return 0;
 }
 
 void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& username, const std::string& password,
-                              bool legacyCrypto, bool ipv6Enabled, bool allowLan) {
+                              const std::string& securityLevel, bool enforceTls13,
+                              const std::string& protoOverride, int connTimeout,
+                              bool ipv6Enabled, bool bypassLanTun,
+                              const std::string& upstreamProxyHost, int upstreamProxyPort,
+                              const std::string& upstreamProxyUser, const std::string& upstreamProxyPass,
+                              bool upstreamProxyAllowCleartext,
+                              const std::string& deviceId) {
     pthread_setname_np(pthread_self(), "ovpn-worker");
 
     if (!ovpnClient) return;
@@ -332,21 +349,80 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
     try {
         openvpn::ClientAPI::Config config;
         config.content = profile;
-        if (legacyCrypto) {
-            config.enableLegacyAlgorithms = true;
-            config.enableNonPreferredDCAlgorithms = true;
-            config.tlsCertProfileOverride = "legacy";
-            callbacks.log(3, "Legacy cryptography enabled: BF-CBC, AES-CBC & legacy TLS profiles permitted");
-        } else {
+
+        // Security level & cryptographic cipher suite policy
+        if (securityLevel == "preferred") {
             config.enableLegacyAlgorithms = false;
             config.enableNonPreferredDCAlgorithms = false;
             config.tlsCertProfileOverride = "preferred";
-            callbacks.log(3, "Modern cryptography enforced: AES-GCM & ChaCha20-Poly1305 required");
+            callbacks.log(3, "Security Level: Preferred (Modern AEAD ciphers enforced, compression disabled)");
+        } else if (securityLevel == "insecure") {
+            config.enableLegacyAlgorithms = true;
+            config.enableNonPreferredDCAlgorithms = true;
+            config.tlsCertProfileOverride = "legacy";
+            callbacks.log(2, "Security Level: Insecure (Permits BF-CBC, 3DES, DES, RC4, MD5, and compression)");
+        } else {
+            // Default: "legacy"
+            config.enableLegacyAlgorithms = true;
+            config.enableNonPreferredDCAlgorithms = true;
+            config.tlsCertProfileOverride = "legacy";
+            callbacks.log(3, "Security Level: Legacy (Standard compatibility: AES-CBC & TLS 1.2+ permitted)");
         }
+
+        // Enforce TLS 1.3
+        if (enforceTls13) {
+            config.tlsVersionMinOverride = "tls_1_3";
+            callbacks.log(3, "Enforcing TLS 1.3 minimum version");
+        } else {
+            config.tlsVersionMinOverride = "";
+        }
+
+        // Transport protocol override
+        if (protoOverride == "adaptive") {
+            config.protoOverride = "adaptive";
+            callbacks.log(3, "Protocol mode: Adaptive (UDP preferred with auto TCP fallback)");
+        } else if (protoOverride == "udp") {
+            config.protoOverride = "udp";
+            callbacks.log(3, "Protocol mode: Force UDP");
+        } else if (protoOverride == "tcp") {
+            config.protoOverride = "tcp";
+            callbacks.log(3, "Protocol mode: Force TCP");
+        } else {
+            config.protoOverride = "";
+            callbacks.log(3, "Protocol mode: Config default");
+        }
+
+        // Connection timeout (0 = continuous retry, or seconds)
+        config.connTimeout = connTimeout;
+        if (connTimeout == 0) {
+            callbacks.log(3, "Connection timeout: Continuous retry");
+        } else {
+            callbacks.log(3, "Connection timeout: %d seconds", connTimeout);
+        }
+
+        // Upstream HTTP Proxy
+        if (!upstreamProxyHost.empty() && upstreamProxyPort > 0) {
+            config.proxyHost = upstreamProxyHost;
+            config.proxyPort = std::to_string(upstreamProxyPort);
+            config.proxyUsername = upstreamProxyUser;
+            config.proxyPassword = upstreamProxyPass;
+            config.proxyAllowCleartextAuth = upstreamProxyAllowCleartext;
+            callbacks.log(3, "Upstream HTTP Proxy active: %s:%d", upstreamProxyHost.c_str(), upstreamProxyPort);
+        }
+
+        // Enterprise Device ID
+        if (!deviceId.empty()) {
+            config.hwAddrOverride = deviceId;
+        }
+
+        // LAN Access / Route Emulation
+        config.allowLocalLanAccess = bypassLanTun;
+#ifdef OPENVPN_PLATFORM_ANDROID
+        config.enableRouteEmulation = true;
+#endif
+
         config.allowUnusedAddrFamilies = ipv6Enabled ? "yes" : "no";
-        config.allowLocalLanAccess = allowLan;
         config.defaultKeyDirection = -1;
-        config.connTimeout = 20;
         config.tunPersist = false;
         config.synchronousDnsLookup = false;
         config.googleDnsFallback = false;

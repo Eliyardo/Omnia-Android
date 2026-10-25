@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -37,6 +38,29 @@ class AppSettings(private val context: Context) {
         val LEGACY_CRYPTO = booleanPreferencesKey("legacy_crypto")
         val BLOCK_TRAFFIC_ON_DROP = booleanPreferencesKey("block_traffic_on_drop")
 
+        // Protocol Override & Connection Timeout
+        val VPN_PROTOCOL_OVERRIDE = stringPreferencesKey("vpn_protocol_override") // "adaptive", "default", "udp", "tcp"
+        val CONNECTION_TIMEOUT = intPreferencesKey("connection_timeout") // 0, 10, 30, 60, 120
+
+        // Security & TLS
+        val SECURITY_LEVEL = stringPreferencesKey("security_level") // "preferred", "legacy", "insecure"
+        val ENFORCE_TLS_1_3 = booleanPreferencesKey("enforce_tls_1_3")
+
+        // UI & Tunnel Controls
+        val CONFIRM_ON_DISCONNECT = booleanPreferencesKey("confirm_on_disconnect")
+        val BYPASS_LAN_TUN = booleanPreferencesKey("bypass_lan_tun")
+
+        // Upstream HTTP Proxy
+        val UPSTREAM_PROXY_ENABLED = booleanPreferencesKey("upstream_proxy_enabled")
+        val UPSTREAM_PROXY_HOST = stringPreferencesKey("upstream_proxy_host")
+        val UPSTREAM_PROXY_PORT = intPreferencesKey("upstream_proxy_port")
+        val UPSTREAM_PROXY_USERNAME = stringPreferencesKey("upstream_proxy_username")
+        val UPSTREAM_PROXY_PASSWORD = stringPreferencesKey("upstream_proxy_password")
+        val UPSTREAM_PROXY_ALLOW_CLEARTEXT = booleanPreferencesKey("upstream_proxy_allow_cleartext")
+
+        // Enterprise Device ID
+        val DEVICE_ID = stringPreferencesKey("device_id")
+
         // Split Tunneling (Per-App Routing in TUN mode)
         val SPLIT_TUNNEL_ENABLED = booleanPreferencesKey("split_tunnel_enabled")
         val SPLIT_TUNNEL_MODE = stringPreferencesKey("split_tunnel_mode") // "allowlist" or "bypass"
@@ -48,6 +72,21 @@ class AppSettings(private val context: Context) {
 
         const val TUNNEL_MODE_PROXY = "proxy"
         const val TUNNEL_MODE_TUN = "tun"
+
+        const val PROTO_ADAPTIVE = "adaptive"
+        const val PROTO_DEFAULT = "default"
+        const val PROTO_UDP = "udp"
+        const val PROTO_TCP = "tcp"
+
+        const val TIMEOUT_10S = 10
+        const val TIMEOUT_30S = 30
+        const val TIMEOUT_1M = 60
+        const val TIMEOUT_2M = 120
+        const val TIMEOUT_CONTINUOUS = 0
+
+        const val SECURITY_LEVEL_PREFERRED = "preferred"
+        const val SECURITY_LEVEL_LEGACY = "legacy"
+        const val SECURITY_LEVEL_INSECURE = "insecure"
 
         const val DNS_MODE_REMOTE = "remote"
         const val DNS_MODE_LOCAL = "local"
@@ -111,6 +150,29 @@ class AppSettings(private val context: Context) {
     val ipv6Enabled: Flow<Boolean> = context.dataStore.data.map { it[IPV6_ENABLED] ?: true }
     val legacyCrypto: Flow<Boolean> = context.dataStore.data.map { it[LEGACY_CRYPTO] ?: false }
     val blockTrafficOnDrop: Flow<Boolean> = context.dataStore.data.map { it[BLOCK_TRAFFIC_ON_DROP] ?: true }
+
+    val vpnProtocolOverride: Flow<String> = context.dataStore.data.map { it[VPN_PROTOCOL_OVERRIDE] ?: PROTO_ADAPTIVE }
+    val connectionTimeout: Flow<Int> = context.dataStore.data.map { it[CONNECTION_TIMEOUT] ?: TIMEOUT_1M }
+    val securityLevel: Flow<String> = context.dataStore.data.map { pref ->
+        pref[SECURITY_LEVEL] ?: if (pref[LEGACY_CRYPTO] == true) SECURITY_LEVEL_LEGACY else SECURITY_LEVEL_LEGACY
+    }
+    val enforceTls13: Flow<Boolean> = context.dataStore.data.map { it[ENFORCE_TLS_1_3] ?: false }
+    val confirmOnDisconnect: Flow<Boolean> = context.dataStore.data.map { it[CONFIRM_ON_DISCONNECT] ?: false }
+    val bypassLanTun: Flow<Boolean> = context.dataStore.data.map { it[BYPASS_LAN_TUN] ?: true }
+
+    val upstreamProxyEnabled: Flow<Boolean> = context.dataStore.data.map { it[UPSTREAM_PROXY_ENABLED] ?: false }
+    val upstreamProxyHost: Flow<String> = context.dataStore.data.map { it[UPSTREAM_PROXY_HOST] ?: "" }
+    val upstreamProxyPort: Flow<Int> = context.dataStore.data.map { it[UPSTREAM_PROXY_PORT] ?: 8080 }
+    val upstreamProxyUsername: Flow<String> = context.dataStore.data.map { it[UPSTREAM_PROXY_USERNAME] ?: "" }
+    val upstreamProxyPassword: Flow<String> = context.dataStore.data.map {
+        val raw = it[UPSTREAM_PROXY_PASSWORD] ?: ""
+        if (raw.isNotEmpty()) {
+            com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
+        } else ""
+    }
+    val upstreamProxyAllowCleartext: Flow<Boolean> = context.dataStore.data.map { it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] ?: true }
+
+    val deviceId: Flow<String> = context.dataStore.data.map { it[DEVICE_ID] ?: "" }
 
     val splitTunnelEnabled: Flow<Boolean> = context.dataStore.data.map { it[SPLIT_TUNNEL_ENABLED] ?: false }
     val splitTunnelMode: Flow<String> = context.dataStore.data.map { it[SPLIT_TUNNEL_MODE] ?: SPLIT_TUNNEL_ALLOWLIST }
@@ -230,6 +292,67 @@ class AppSettings(private val context: Context) {
 
     suspend fun setSplitTunnelApps(apps: Set<String>) {
         context.dataStore.edit { it[SPLIT_TUNNEL_APPS] = apps }
+    }
+
+    suspend fun setVpnProtocolOverride(proto: String) {
+        context.dataStore.edit { it[VPN_PROTOCOL_OVERRIDE] = proto }
+    }
+
+    suspend fun setConnectionTimeout(seconds: Int) {
+        context.dataStore.edit { it[CONNECTION_TIMEOUT] = seconds }
+    }
+
+    suspend fun setSecurityLevel(level: String) {
+        context.dataStore.edit {
+            it[SECURITY_LEVEL] = level
+            it[LEGACY_CRYPTO] = (level != SECURITY_LEVEL_PREFERRED)
+        }
+    }
+
+    suspend fun setEnforceTls13(enforce: Boolean) {
+        context.dataStore.edit { it[ENFORCE_TLS_1_3] = enforce }
+    }
+
+    suspend fun setConfirmOnDisconnect(confirm: Boolean) {
+        context.dataStore.edit { it[CONFIRM_ON_DISCONNECT] = confirm }
+    }
+
+    suspend fun setBypassLanTun(bypass: Boolean) {
+        context.dataStore.edit { it[BYPASS_LAN_TUN] = bypass }
+    }
+
+    suspend fun setUpstreamProxy(
+        enabled: Boolean,
+        host: String? = null,
+        port: Int? = null,
+        username: String? = null,
+        password: String? = null,
+        allowCleartext: Boolean? = null
+    ) {
+        context.dataStore.edit {
+            it[UPSTREAM_PROXY_ENABLED] = enabled
+            if (host != null) it[UPSTREAM_PROXY_HOST] = host.trim()
+            if (port != null) it[UPSTREAM_PROXY_PORT] = port
+            if (username != null) it[UPSTREAM_PROXY_USERNAME] = username.trim()
+            if (password != null) {
+                it[UPSTREAM_PROXY_PASSWORD] = if (password.isNotEmpty()) {
+                    com.eliyardo.omnia.security.KeystoreHelper.encrypt(password)
+                } else ""
+            }
+            if (allowCleartext != null) it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] = allowCleartext
+        }
+    }
+
+    suspend fun getOrCreateDeviceId(): String {
+        val current: String? = context.dataStore.data.first()[DEVICE_ID]
+        if (!current.isNullOrBlank()) return current
+        val newId = java.util.UUID.randomUUID().toString()
+        context.dataStore.edit { it[DEVICE_ID] = newId }
+        return newId
+    }
+
+    suspend fun setDeviceId(id: String) {
+        context.dataStore.edit { it[DEVICE_ID] = id.trim() }
     }
 
     /**

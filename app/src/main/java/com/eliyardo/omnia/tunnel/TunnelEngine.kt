@@ -61,9 +61,18 @@ class TunnelEngine {
         username: String? = null,
         password: String? = null,
         isTunMode: Boolean = false,
-        legacyCrypto: Boolean = false,
+        securityLevel: String = "legacy",
+        enforceTls13: Boolean = false,
+        protoOverride: String = "adaptive",
+        connTimeout: Int = 60,
         ipv6Enabled: Boolean = true,
-        allowLan: Boolean = false
+        bypassLanTun: Boolean = true,
+        upstreamProxyHost: String = "",
+        upstreamProxyPort: Int = 0,
+        upstreamProxyUser: String = "",
+        upstreamProxyPass: String = "",
+        upstreamProxyAllowCleartext: Boolean = true,
+        deviceId: String = ""
     ): Boolean {
         if (nativeHandle == 0L) {
             Log.i(TAG, "Engine not initialized yet, initializing...")
@@ -80,9 +89,18 @@ class TunnelEngine {
                 username ?: "",
                 password ?: "",
                 isTunMode,
-                legacyCrypto,
+                securityLevel,
+                enforceTls13,
+                protoOverride,
+                connTimeout,
                 ipv6Enabled,
-                allowLan
+                bypassLanTun,
+                upstreamProxyHost,
+                upstreamProxyPort,
+                upstreamProxyUser,
+                upstreamProxyPass,
+                upstreamProxyAllowCleartext,
+                deviceId
             ) == 0
         } catch (t: Throwable) {
             Log.e(TAG, "nativeConnect threw exception", t)
@@ -291,9 +309,18 @@ class TunnelEngine {
         username: String,
         password: String,
         isTunMode: Boolean,
-        legacyCrypto: Boolean,
+        securityLevel: String,
+        enforceTls13: Boolean,
+        protoOverride: String,
+        connTimeout: Int,
         ipv6Enabled: Boolean,
-        allowLan: Boolean
+        bypassLanTun: Boolean,
+        upstreamProxyHost: String,
+        upstreamProxyPort: Int,
+        upstreamProxyUser: String,
+        upstreamProxyPass: String,
+        upstreamProxyAllowCleartext: Boolean,
+        deviceId: String
     ): Int
     private external fun nativeDisconnect(handle: Long)
     private external fun nativeDestroy(handle: Long)

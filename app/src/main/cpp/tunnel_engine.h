@@ -93,7 +93,19 @@ public:
 
     bool initialize(JNIEnv* env, jobject engineObj);
     int connect(const std::string& profile, const std::string& username, const std::string& password,
-                bool isTunMode = false, bool legacyCrypto = false, bool ipv6Enabled = true, bool allowLan = false);
+                bool isTunMode = false,
+                const std::string& securityLevel = "legacy",
+                bool enforceTls13 = false,
+                const std::string& protoOverride = "adaptive",
+                int connTimeout = 60,
+                bool ipv6Enabled = true,
+                bool bypassLanTun = true,
+                const std::string& upstreamProxyHost = "",
+                int upstreamProxyPort = 0,
+                const std::string& upstreamProxyUser = "",
+                const std::string& upstreamProxyPass = "",
+                bool upstreamProxyAllowCleartext = true,
+                const std::string& deviceId = "");
     void disconnect();
     void destroy();
     void setCustomDns(const std::string& dns1, const std::string& dns2) {
@@ -146,7 +158,13 @@ private:
     std::unique_ptr<OpenVpnClientImpl> ovpnClient;
     std::thread ovpnThread;
     void runOpenVpn(const std::string& profile, const std::string& username, const std::string& password,
-                    bool legacyCrypto, bool ipv6Enabled, bool allowLan);
+                    const std::string& securityLevel, bool enforceTls13,
+                    const std::string& protoOverride, int connTimeout,
+                    bool ipv6Enabled, bool bypassLanTun,
+                    const std::string& upstreamProxyHost, int upstreamProxyPort,
+                    const std::string& upstreamProxyUser, const std::string& upstreamProxyPass,
+                    bool upstreamProxyAllowCleartext,
+                    const std::string& deviceId);
 
     /* Traffic stats */
     std::atomic<uint64_t> bytesIn{0};

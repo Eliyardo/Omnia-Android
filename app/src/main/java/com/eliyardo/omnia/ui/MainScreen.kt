@@ -79,10 +79,12 @@ fun MainScreen(viewModel: MainViewModel) {
     val themeMode by viewModel.themeMode.collectAsState()
     val tunnelMode by viewModel.tunnelMode.collectAsState()
     val stagedImport by viewModel.stagedImport.collectAsState()
+    val confirmOnDisconnect by viewModel.settings.confirmOnDisconnect.collectAsState(initial = false)
 
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var showProfileManager by remember { mutableStateOf(false) }
+    var showDisconnectConfirmDialog by remember { mutableStateOf(false) }
     var profileToEdit by remember { mutableStateOf<OvpnProfile?>(null) }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -95,6 +97,42 @@ fun MainScreen(viewModel: MainViewModel) {
         CredentialsDialog(
             onConfirm = { username, password -> viewModel.connectWithCredentials(username, password) },
             onDismiss = { viewModel.dismissCredentialsDialog() }
+        )
+    }
+
+    if (showDisconnectConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectConfirmDialog = false },
+            title = {
+                Text(
+                    text = "Disconnect from VPN?",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Text(
+                    text = "Your connection to ${activeProfile?.name ?: "the VPN server"} will be disconnected, and network traffic will no longer be encrypted.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDisconnectConfirmDialog = false
+                        viewModel.disconnect()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Disconnect")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectConfirmDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            shape = RoundedCornerShape(16.dp)
         )
     }
 
@@ -315,8 +353,15 @@ fun MainScreen(viewModel: MainViewModel) {
                 tunnelState = tunnelState,
                 hasProfile = activeProfile != null,
                 isProxyMode = tunnelMode == AppSettings.TUNNEL_MODE_PROXY,
+                confirmOnDisconnect = confirmOnDisconnect,
                 onConnect = { viewModel.connect() },
-                onDisconnect = { viewModel.disconnect() }
+                onDisconnect = {
+                    if (confirmOnDisconnect && tunnelState is TunnelState.Connected) {
+                        showDisconnectConfirmDialog = true
+                    } else {
+                        viewModel.disconnect()
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.weight(1f))
@@ -543,6 +588,7 @@ fun HeroPowerButton(
     tunnelState: TunnelState,
     hasProfile: Boolean,
     isProxyMode: Boolean = true,
+    confirmOnDisconnect: Boolean = false,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -719,7 +765,9 @@ fun HeroPowerButton(
                         indication = null
                     ) {
                         if (isConnected || isConnecting) {
-                            isDisconnectingUser = true
+                            if (!confirmOnDisconnect || !isConnected) {
+                                isDisconnectingUser = true
+                            }
                             onDisconnect()
                         } else {
                             onConnect()
