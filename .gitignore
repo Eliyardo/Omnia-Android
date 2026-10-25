@@ -1,0 +1,46 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+build/
+.gradle/
+.cxx/
+
+# Gradle files
+.gradletasknamecache
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Signing Keys and Certificates
+*.jks
+*.keystore
+*.p12
+*.pem
+signing.properties
+
+# Release output artifacts
+release-artifacts/
+
+# Log Files
+*.log
+
+# Android Studio / IntelliJ IDEA
+*.iml
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store

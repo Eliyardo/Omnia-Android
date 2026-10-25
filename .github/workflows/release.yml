@@ -1,0 +1,127 @@
+name: Release Omnia
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v1.0.3)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Accept Android SDK Licenses & Setup NDK
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Determine Version and Tag
+        id: versioning
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            TAG="$REF_NAME"
+          else
+            TAG="v1.0.3"
+          fi
+          
+          # Strip leading 'v' for android versionName
+          VERSION_NAME="${TAG#v}"
+          
+          # Derive integer versionCode from tag (e.g. 1.0.0 -> 10000, 1.2.3 -> 10203)
+          IFS='.' read -r major minor patch <<< "$VERSION_NAME"
+          major=${major:-1}
+          minor=${minor:-0}
+          patch=${patch:-0}
+          VERSION_CODE=$(( major * 10000 + minor * 100 + patch ))
+          
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "Resolved Tag: $TAG (versionName: $VERSION_NAME, versionCode: $VERSION_CODE)"
+
+      - name: Run Unit Tests
+        run: ./gradlew test
+
+      - name: Prepare Signing Keystore
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "has_signing=true" >> $GITHUB_OUTPUT
+            echo "Keystore decoded successfully."
+            echo "Keystore contents:"
+            keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$KEYSTORE_PASSWORD" || true
+          else
+            echo "has_signing=false" >> $GITHUB_OUTPUT
+            echo "::warning ::No RELEASE_KEYSTORE_BASE64 secret provided. Falling back to unsigned/debug build."
+          fi
+
+      - name: Build Release Split APKs
+        env:
+          VERSION_NAME: ${{ steps.versioning.outputs.version_name }}
+          VERSION_CODE: ${{ steps.versioning.outputs.version_code }}
+          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Clean up temporary keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Prepare Release Artifacts & SHA256 Checksums
+        run: |
+          mkdir -p release-artifacts
+          cp app/build/outputs/apk/release/*.apk release-artifacts/
+          cd release-artifacts
+          sha256sum *.apk > sha256sums.txt
+          echo "=== Generated Artifacts ==="
+          ls -la
+          echo "=== SHA-256 Checksums ==="
+          cat sha256sums.txt
+
+      - name: Create GitHub Release and Upload APKs
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.versioning.outputs.tag }}
+          name: Omnia ${{ steps.versioning.outputs.tag }}
+          files: release-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

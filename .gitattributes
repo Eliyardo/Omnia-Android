@@ -1,0 +1,7 @@
+app/src/main/cpp/android_openssl/** linguist-vendored
+app/src/main/cpp/asio/** linguist-vendored
+app/src/main/cpp/fmt/** linguist-vendored
+app/src/main/cpp/lwip/** linguist-vendored
+app/src/main/cpp/lz4/** linguist-vendored
+app/src/main/cpp/openvpn3/** linguist-vendored
+scripts/** linguist-documentation
