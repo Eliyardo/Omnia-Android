@@ -571,6 +571,7 @@ fun HeroPowerButton(
     }
 
     val isDisconnecting = isDisconnectingUser
+    val isSpinning = isConnecting || isDisconnecting
 
     // Border and theme color transitions
     val targetBorderColor = when {
@@ -587,32 +588,39 @@ fun HeroPowerButton(
         label = "borderColor"
     )
 
-    // Continuous smooth spin animation
+    // Smooth spin animation active during connecting/disconnecting
     val infiniteTransition = rememberInfiniteTransition(label = "spin")
     val spinRotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(if (isDisconnecting) 900 else 1600, easing = LinearEasing),
+            animation = tween(if (isDisconnecting) 800 else 1400, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "spinRotation"
     )
 
+    // Crossfade between stationary solid circle and spinning arcs
+    val spinnerAlpha by animateFloatAsState(
+        targetValue = if (isSpinning) 1f else 0f,
+        animationSpec = tween(260, easing = FastOutSlowInEasing),
+        label = "spinnerAlpha"
+    )
+    val solidCircleAlpha by animateFloatAsState(
+        targetValue = if (isSpinning) 0f else 1f,
+        animationSpec = tween(260, easing = FastOutSlowInEasing),
+        label = "solidCircleAlpha"
+    )
+
     // Sweep angle of perimeter arcs:
-    // Disconnecting: 35° (quick, stylish unravelling)
-    // Connecting: 95° (two balanced arcs with 85° gaps)
-    // Connected or Idle: 180° (arcs meet and form seamless solid perimeter)
-    val targetSweep = when {
-        isDisconnecting -> 35f
-        isConnecting -> 95f
-        else -> 180f
-    }
+    // Disconnecting: 35° (short, fast unraveling)
+    // Connecting: 95° (two balanced arcs with gaps)
+    val targetSweep = if (isDisconnecting) 35f else 95f
 
     val arcSweep by animateFloatAsState(
         targetValue = targetSweep,
         animationSpec = tween(
-            durationMillis = if (isDisconnecting) 200 else 400,
+            durationMillis = if (isDisconnecting) 200 else 350,
             easing = FastOutSlowInEasing
         ),
         label = "arcSweep"
@@ -718,7 +726,7 @@ fun HeroPowerButton(
                         }
                     }
             ) {
-                // Perimeter canvas drawing the arcs
+                // Perimeter canvas drawing the border
                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                     val strokeWidth = 3.5.dp.toPx()
                     val halfStroke = strokeWidth / 2f
@@ -727,45 +735,58 @@ fun HeroPowerButton(
                         size.height - strokeWidth
                     )
                     val topLeft = androidx.compose.ui.geometry.Offset(halfStroke, halfStroke)
+                    val radius = (size.width - strokeWidth) / 2f
 
-                    // Faint background guide track
-                    drawCircle(
-                        color = borderColor.copy(alpha = 0.12f),
-                        radius = (size.width - strokeWidth) / 2f,
-                        center = center,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
-                    )
-
-                    // Continuous rotation: spins during connecting and disconnecting, seamlessly becomes full circle when connected without angle snap
-                    val currentRotation = spinRotation
-
-                    // Arc 1
-                    drawArc(
-                        color = borderColor,
-                        startAngle = currentRotation,
-                        sweepAngle = arcSweep,
-                        useCenter = false,
-                        topLeft = topLeft,
-                        size = arcSize,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = strokeWidth,
-                            cap = if (arcSweep < 179f) androidx.compose.ui.graphics.StrokeCap.Round else androidx.compose.ui.graphics.StrokeCap.Square
+                    // 1. Stationary solid circle (for Connected, Disconnected, Error) - clean & seamless, no seam dots
+                    if (solidCircleAlpha > 0.001f) {
+                        drawCircle(
+                            color = borderColor.copy(alpha = borderColor.alpha * solidCircleAlpha),
+                            radius = radius,
+                            center = center,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
                         )
-                    )
+                    }
 
-                    // Arc 2 (opposite side)
-                    drawArc(
-                        color = borderColor,
-                        startAngle = currentRotation + 180f,
-                        sweepAngle = arcSweep,
-                        useCenter = false,
-                        topLeft = topLeft,
-                        size = arcSize,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(
-                            width = strokeWidth,
-                            cap = if (arcSweep < 179f) androidx.compose.ui.graphics.StrokeCap.Round else androidx.compose.ui.graphics.StrokeCap.Square
+                    // 2. Dynamic spinning arcs (only active during Connecting or Disconnecting)
+                    if (spinnerAlpha > 0.001f) {
+                        // Faint background guide track
+                        drawCircle(
+                            color = borderColor.copy(alpha = 0.15f * spinnerAlpha),
+                            radius = radius,
+                            center = center,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
                         )
-                    )
+
+                        val currentRotation = spinRotation
+
+                        // Arc 1
+                        drawArc(
+                            color = borderColor.copy(alpha = borderColor.alpha * spinnerAlpha),
+                            startAngle = currentRotation,
+                            sweepAngle = arcSweep,
+                            useCenter = false,
+                            topLeft = topLeft,
+                            size = arcSize,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = strokeWidth,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                            )
+                        )
+
+                        // Arc 2 (opposite side)
+                        drawArc(
+                            color = borderColor.copy(alpha = borderColor.alpha * spinnerAlpha),
+                            startAngle = currentRotation + 180f,
+                            sweepAngle = arcSweep,
+                            useCenter = false,
+                            topLeft = topLeft,
+                            size = arcSize,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                                width = strokeWidth,
+                                cap = androidx.compose.ui.graphics.StrokeCap.Round
+                            )
+                        )
+                    }
                 }
 
                 // Inner State Text with smooth transition
