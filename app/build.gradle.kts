@@ -11,9 +11,9 @@ android {
     compileSdk = 35
 
     val vCode = (project.findProperty("versionCode") as? String)?.toIntOrNull()
-        ?: System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10100
+        ?: System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10101
     val vName = (project.findProperty("versionName") as? String)
-        ?: System.getenv("VERSION_NAME") ?: "1.1.0"
+        ?: System.getenv("VERSION_NAME") ?: "1.1.1"
 
     defaultConfig {
         applicationId = "com.eliyardo.omnia"
