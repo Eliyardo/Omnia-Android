@@ -307,18 +307,21 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    val isPortCollision = socks5PortText.trim().isNotEmpty() && socks5PortText.trim() == httpPortText.trim()
+
                     OutlinedTextField(
                         value = socks5PortText,
                         onValueChange = { v ->
                             socks5PortText = v
                             v.toIntOrNull()?.let { port ->
-                                if (port in 1024..65535) {
+                                if (port in 1024..65535 && port != httpPort) {
                                     scope.launch { viewModel.settings.setSocks5Port(port) }
                                 }
                             }
                         },
                         label = { Text("SOCKS5 Port") },
                         placeholder = { Text("10880") },
+                        isError = isPortCollision,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f),
@@ -330,17 +333,27 @@ fun SettingsScreen(
                         onValueChange = { v ->
                             httpPortText = v
                             v.toIntOrNull()?.let { port ->
-                                if (port in 1024..65535) {
+                                if (port in 1024..65535 && port != socks5Port) {
                                     scope.launch { viewModel.settings.setHttpPort(port) }
                                 }
                             }
                         },
                         label = { Text("HTTP Port") },
                         placeholder = { Text("10890") },
+                        isError = isPortCollision,
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp)
+                    )
+                }
+
+                if (socks5PortText.trim().isNotEmpty() && socks5PortText.trim() == httpPortText.trim()) {
+                    Text(
+                        text = "SOCKS5 and HTTP ports cannot be the same.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 4.dp)
                     )
                 }
 
@@ -387,7 +400,11 @@ fun SettingsScreen(
                         checked = proxyAuthEnabled,
                         onCheckedChange = { enabled ->
                             scope.launch {
-                                viewModel.settings.setProxyAuth(enabled, proxyUserText, proxyPassText)
+                                viewModel.settings.setProxyAuthEnabled(enabled)
+                                if (!enabled && allowLan) {
+                                    viewModel.settings.setAllowLan(false)
+                                    viewModel.settings.setBindAddress("127.0.0.1")
+                                }
                             }
                         }
                     )
@@ -409,7 +426,7 @@ fun SettingsScreen(
                             onValueChange = { v ->
                                 proxyUserText = v
                                 scope.launch {
-                                    viewModel.settings.setProxyAuth(true, v, proxyPassText)
+                                    viewModel.settings.setProxyUsername(v)
                                 }
                             },
                             label = { Text("Proxy Username") },
@@ -423,7 +440,7 @@ fun SettingsScreen(
                             onValueChange = { v ->
                                 proxyPassText = v
                                 scope.launch {
-                                    viewModel.settings.setProxyAuth(true, proxyUserText, v)
+                                    viewModel.settings.setProxyPassword(v)
                                 }
                             },
                             label = { Text("Proxy Password") },
@@ -432,6 +449,44 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp)
                         )
+
+                        if (proxyUserText.isBlank() || proxyPassText.isBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Enter both username and password to enforce authentication.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        } else {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Proxy authentication is active and enforced.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -510,7 +565,7 @@ fun SettingsScreen(
                                 label = { Text("Primary DNS") },
                                 placeholder = { Text("1.1.1.1") },
                                 singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp)
                             )
@@ -524,7 +579,7 @@ fun SettingsScreen(
                                 label = { Text("Secondary DNS") },
                                 placeholder = { Text("1.0.0.1") },
                                 singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp)
                             )
@@ -560,7 +615,7 @@ fun SettingsScreen(
                         checked = allowLan,
                         onCheckedChange = { enabled ->
                             if (enabled) {
-                                if (proxyUsername.isBlank() || proxyPassword.isBlank()) {
+                                if (!proxyAuthEnabled || proxyUserText.isBlank() || proxyPassText.isBlank()) {
                                     showLanAuthDialog = true
                                 } else {
                                     scope.launch {

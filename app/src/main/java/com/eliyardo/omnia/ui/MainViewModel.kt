@@ -275,6 +275,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
 
+            if (profile.isCorrupted) {
+                _errorMessage.value = "Selected profile is corrupted (${profile.decryptionError ?: "decryption failed"}). Please re-import or edit this profile."
+                return
+            }
+
             if (profile.hasAuth && username == null) {
                 if (profile.hasInlineCredentials) {
                     connect(profile.inlineUsername, profile.inlinePassword)

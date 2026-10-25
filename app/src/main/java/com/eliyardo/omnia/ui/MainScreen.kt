@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -1375,7 +1377,10 @@ fun CredentialsDialog(onConfirm: (String, String) -> Unit, onDismiss: () -> Unit
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(username, password) }) { Text("Connect") }
+            Button(
+                onClick = { onConfirm(username, password) },
+                enabled = username.isNotBlank()
+            ) { Text("Connect") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
@@ -1623,6 +1628,7 @@ fun EditProfileDialog(
                                     )
                                 },
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.weight(1.1f),
                                 colors = OutlinedTextFieldDefaults.colors(

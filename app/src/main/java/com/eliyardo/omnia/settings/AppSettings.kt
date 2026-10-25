@@ -132,14 +132,33 @@ class AppSettings(private val context: Context) {
         context.dataStore.edit { it[HTTP_PORT] = port }
     }
     
-    suspend fun setProxyAuth(enabled: Boolean, username: String = "", password: String = "") {
-        val actualEnabled = enabled && username.isNotBlank() && password.isNotEmpty()
+    suspend fun setProxyAuthEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[PROXY_AUTH_ENABLED] = enabled }
+    }
+
+    suspend fun setProxyUsername(username: String) {
+        context.dataStore.edit { it[PROXY_USERNAME] = username.trim() }
+    }
+
+    suspend fun setProxyPassword(password: String) {
         context.dataStore.edit {
-            it[PROXY_AUTH_ENABLED] = actualEnabled
-            it[PROXY_USERNAME] = if (actualEnabled) username.trim() else ""
-            it[PROXY_PASSWORD] = if (actualEnabled && password.isNotEmpty()) {
+            it[PROXY_PASSWORD] = if (password.isNotEmpty()) {
                 com.eliyardo.omnia.security.KeystoreHelper.encrypt(password)
             } else ""
+        }
+    }
+
+    suspend fun setProxyAuth(enabled: Boolean, username: String? = null, password: String? = null) {
+        context.dataStore.edit {
+            it[PROXY_AUTH_ENABLED] = enabled
+            if (username != null) {
+                it[PROXY_USERNAME] = username.trim()
+            }
+            if (password != null) {
+                it[PROXY_PASSWORD] = if (password.isNotEmpty()) {
+                    com.eliyardo.omnia.security.KeystoreHelper.encrypt(password)
+                } else ""
+            }
         }
     }
 

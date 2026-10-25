@@ -517,7 +517,7 @@ class ProxyVpnService : VpnService() {
             } else {
                 rawBindAddr
             }
-            val effectiveAuth = rawAuthEnabled && authUser.isNotBlank() && authPass.isNotEmpty()
+            val effectiveAuth = rawAuthEnabled
 
             socks5Server?.stop()
             httpProxyServer?.stop()
@@ -750,8 +750,9 @@ class ProxyVpnService : VpnService() {
                         vpnInterface = null
                     } catch (_: Exception) {}
                 }
-                val errorTitle = if (cachedBlockTrafficOnDrop) "VPN Lost — Traffic Blocked" else "Connection Error"
-                val errorSub = if (cachedBlockTrafficOnDrop) "Kill-switch active. Tap Disconnect to restore network." else state.message
+                val isTun = cachedTunnelMode == AppSettings.TUNNEL_MODE_TUN
+                val errorTitle = if (isTun && cachedBlockTrafficOnDrop) "VPN Lost — Traffic Blocked" else "Connection Error"
+                val errorSub = if (isTun && cachedBlockTrafficOnDrop) "Kill-switch active. Tap Disconnect to restore network." else state.message
                 val errorNotification = createNotification(errorTitle, errorSub)
                 nm?.notify(NOTIFICATION_ID, errorNotification)
                 return

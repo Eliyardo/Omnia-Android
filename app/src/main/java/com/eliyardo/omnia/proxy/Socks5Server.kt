@@ -198,6 +198,13 @@ class Socks5Server(
     }
     
     private fun handleUsernamePasswordAuth(input: InputStream, output: OutputStream): Boolean {
+        // Fail-closed: refuse auth if server credentials are not properly configured
+        if (authUsername.isBlank() || authPassword.isEmpty()) {
+            output.write(byteArrayOf(0x01, 0x01))
+            output.flush()
+            return false
+        }
+        
         val authVersion = input.read()
         if (authVersion != 0x01) return false
         
