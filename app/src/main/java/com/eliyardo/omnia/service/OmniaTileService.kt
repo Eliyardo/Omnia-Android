@@ -30,6 +30,8 @@ class OmniaTileService : TileService() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val profileManager by lazy { ProfileManager(applicationContext) }
+    private val settings by lazy { AppSettings(applicationContext) }
     private var proxyService: ProxyVpnService? = null
     private var isBound = false
     private var stateCollectJob: Job? = null
@@ -97,8 +99,6 @@ class OmniaTileService : TileService() {
         // Currently disconnected -> Connect with active profile
         serviceScope.launch {
             val (active, isTun, content) = withContext(Dispatchers.IO) {
-                val profileManager = ProfileManager(applicationContext)
-                val settings = AppSettings(applicationContext)
                 profileManager.awaitLoaded()
                 val active = profileManager.activeProfile.value
                 val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN

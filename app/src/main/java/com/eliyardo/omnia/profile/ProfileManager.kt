@@ -92,8 +92,14 @@ class ProfileManager(private val context: Context) {
                     continue
                 }
 
-                // Handle standalone auth-user-pass
-                if (lower.startsWith("auth-user-pass")) {
+                // Strip unsupported directives
+                val directive = lower.split("\\s+".toRegex())[0]
+                if (directive in OvpnParser.UNSUPPORTED_DIRECTIVES) {
+                    continue
+                }
+
+                // Handle standalone auth-user-pass (exact match or space-separated argument, preserving auth-user-pass-verify)
+                if (lower == "auth-user-pass" || lower.startsWith("auth-user-pass ")) {
                     continue
                 }
 

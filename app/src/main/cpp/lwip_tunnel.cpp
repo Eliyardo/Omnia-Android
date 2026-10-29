@@ -473,17 +473,17 @@ void LwipTunnel::shutdown() {
 void LwipTunnel::writeToTun(struct pbuf* p) {
     if (tunFd < 0 || !p) return;
 
-    /* Linearize the pbuf chain if needed */
-    uint8_t buffer[4096];
+    /* Linearize the pbuf chain into a 64KB thread-local buffer to support all MTU sizes */
+    static thread_local std::vector<uint8_t> buffer(65536);
     u16_t totalLen = p->tot_len;
-    if (totalLen > sizeof(buffer)) {
+    if (totalLen > buffer.size()) {
         LOGW("Packet too large: %u bytes", totalLen);
         return;
     }
 
-    pbuf_copy_partial(p, buffer, totalLen, 0);
+    pbuf_copy_partial(p, buffer.data(), totalLen, 0);
 
-    ssize_t written = write(tunFd, buffer, totalLen);
+    ssize_t written = write(tunFd, buffer.data(), totalLen);
     if (written < 0) {
         if (errno != EAGAIN && errno != EWOULDBLOCK) {
             LOGE("Error writing to tun fd: %s", strerror(errno));
@@ -544,7 +544,18 @@ err_t LwipTunnel::tcpRecvCb(void* arg, struct tcp_pcb* tpcb, struct pbuf* p, err
     if (!p) {
         /* Connection closed by remote */
         LOGD("TCP connection closed by remote (connId=%d)", (int)connId);
+        if (tpcb) {
+            tcp_arg(tpcb, nullptr);
+            tcp_recv(tpcb, nullptr);
+            tcp_err(tpcb, nullptr);
+            tcp_sent(tpcb, nullptr);
+            tcp_close(tpcb);
+        }
         if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {
+            auto conn = g_activeLwipTunnel->engine->getConnection((int)connId);
+            if (conn) {
+                conn->tcp_pcb = nullptr;
+            }
             g_activeLwipTunnel->engine->onLwipConnectionClosed((int)connId, "Remote closed");
         }
         return ERR_OK;

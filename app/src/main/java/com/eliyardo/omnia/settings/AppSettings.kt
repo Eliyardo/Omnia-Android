@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -127,14 +128,16 @@ class AppSettings(private val context: Context) {
     val httpPort: Flow<Int> = context.dataStore.data.map { it[HTTP_PORT] ?: DEFAULT_HTTP_PORT }
     val proxyAuthEnabled: Flow<Boolean> = context.dataStore.data.map { it[PROXY_AUTH_ENABLED] ?: false }
     val proxyUsername: Flow<String> = context.dataStore.data.map { it[PROXY_USERNAME] ?: "" }
-    val proxyPassword: Flow<String> = context.dataStore.data.map {
-        val raw = it[PROXY_PASSWORD] ?: ""
-        if (raw.isNotEmpty()) {
-            val decrypted = com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
-            // If Keystore decryption fails, treat as invalidated and return empty (never leak raw ciphertext)
-            decrypted
-        } else ""
-    }
+    val proxyPassword: Flow<String> = context.dataStore.data
+        .map { it[PROXY_PASSWORD] ?: "" }
+        .distinctUntilChanged()
+        .map { raw ->
+            if (raw.isNotEmpty()) {
+                val decrypted = com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
+                // If Keystore decryption fails, treat as invalidated and return empty (never leak raw ciphertext)
+                decrypted
+            } else ""
+        }
     val dnsMode: Flow<String> = context.dataStore.data.map { it[DNS_MODE] ?: DNS_MODE_REMOTE }
     val dnsProvider: Flow<String> = context.dataStore.data.map { it[DNS_PROVIDER] ?: DNS_PROVIDER_SERVER }
     val customDnsPrimary: Flow<String> = context.dataStore.data.map { it[CUSTOM_DNS_PRIMARY] ?: "1.1.1.1" }
@@ -159,12 +162,14 @@ class AppSettings(private val context: Context) {
     val upstreamProxyHost: Flow<String> = context.dataStore.data.map { it[UPSTREAM_PROXY_HOST] ?: "" }
     val upstreamProxyPort: Flow<Int> = context.dataStore.data.map { it[UPSTREAM_PROXY_PORT] ?: 8080 }
     val upstreamProxyUsername: Flow<String> = context.dataStore.data.map { it[UPSTREAM_PROXY_USERNAME] ?: "" }
-    val upstreamProxyPassword: Flow<String> = context.dataStore.data.map {
-        val raw = it[UPSTREAM_PROXY_PASSWORD] ?: ""
-        if (raw.isNotEmpty()) {
-            com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
-        } else ""
-    }
+    val upstreamProxyPassword: Flow<String> = context.dataStore.data
+        .map { it[UPSTREAM_PROXY_PASSWORD] ?: "" }
+        .distinctUntilChanged()
+        .map { raw ->
+            if (raw.isNotEmpty()) {
+                com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
+            } else ""
+        }
     val upstreamProxyAllowCleartext: Flow<Boolean> = context.dataStore.data.map { it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] ?: false }
 
     val splitTunnelEnabled: Flow<Boolean> = context.dataStore.data.map { it[SPLIT_TUNNEL_ENABLED] ?: false }

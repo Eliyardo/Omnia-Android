@@ -169,7 +169,7 @@ class Socks5Server(
         }
     }
     
-    private fun handleAuth(input: InputStream, output: OutputStream): Boolean {
+    internal fun handleAuth(input: InputStream, output: OutputStream): Boolean {
         // Read version and method count
         val version = input.read()
         if (version != SOCKS_VERSION.toInt()) {
@@ -206,7 +206,7 @@ class Socks5Server(
         }
     }
     
-    private fun handleUsernamePasswordAuth(input: InputStream, output: OutputStream): Boolean {
+    internal fun handleUsernamePasswordAuth(input: InputStream, output: OutputStream): Boolean {
         // Fail-closed: refuse auth if server credentials are not properly configured
         if (authUsername.isBlank() || authPassword.isEmpty()) {
             output.write(byteArrayOf(0x01, 0x01))
@@ -248,14 +248,14 @@ class Socks5Server(
         return success
     }
     
-    private data class Socks5Request(
+    internal data class Socks5Request(
         val command: Byte,
         val addressType: Byte,
         val destAddress: String,
         val destPort: Int
     )
     
-    private fun readRequest(input: InputStream): Socks5Request? {
+    internal fun readRequest(input: InputStream): Socks5Request? {
         val version = input.read()
         if (version != SOCKS_VERSION.toInt()) return null
         
@@ -470,6 +470,7 @@ class Socks5Server(
 
         val associationClosed = AtomicBoolean(false)
         val clientUdpEndpoint = java.util.concurrent.atomic.AtomicReference<InetSocketAddress?>(null)
+        val lastActivityTime = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
 
         val udpCallback = object : TunnelEngine.TunnelUdpCallback {
             override fun onUdpDataReceived(
@@ -482,6 +483,7 @@ class Socks5Server(
             ) {
                 if (associationClosed.get() || relaySocket.isClosed) return
                 val clientEndpoint = clientUdpEndpoint.get() ?: return
+                lastActivityTime.set(System.currentTimeMillis())
 
                 try {
                     val remoteIp = InetAddress.getByName(remoteHost)
@@ -528,7 +530,10 @@ class Socks5Server(
         sendReply(clientOutput, REPLY_SUCCESS, advertisedAddr, relaySocket.localPort)
         Log.d(TAG, "UDP ASSOCIATE established: relay on ${bindInetAddr.hostAddress}:${relaySocket.localPort}, connId=$connId")
 
-        clientSocket.soTimeout = 0
+        // Enable TCP keepalive and polling timeouts to prevent indefinite thread pinning on abandoned connections
+        clientSocket.keepAlive = true
+        clientSocket.soTimeout = 30_000
+        relaySocket.soTimeout = 30_000
 
         try {
             coroutineScope {
@@ -540,6 +545,13 @@ class Socks5Server(
                         try {
                             packet.length = inBuf.size // Reset buffer length to prevent truncation
                             relaySocket.receive(packet)
+                            lastActivityTime.set(System.currentTimeMillis())
+                        } catch (e: java.net.SocketTimeoutException) {
+                            if (System.currentTimeMillis() - lastActivityTime.get() > RELAY_IDLE_TIMEOUT_MS) {
+                                Log.d(TAG, "UDP associate relay socket idle timeout exceeded")
+                                break
+                            }
+                            continue
                         } catch (e: java.net.SocketException) {
                             break
                         } catch (e: Exception) {
@@ -617,10 +629,18 @@ class Socks5Server(
                     val dummy = ByteArray(64)
                     try {
                         while (running.get() && !associationClosed.get()) {
-                            val r = clientInput.read(dummy)
-                            if (r < 0) {
-                                Log.d(TAG, "TCP control connection closed by client (EOF)")
-                                break
+                            try {
+                                val r = clientInput.read(dummy)
+                                if (r < 0) {
+                                    Log.d(TAG, "TCP control connection closed by client (EOF)")
+                                    break
+                                }
+                            } catch (e: java.net.SocketTimeoutException) {
+                                if (System.currentTimeMillis() - lastActivityTime.get() > RELAY_IDLE_TIMEOUT_MS) {
+                                    Log.d(TAG, "UDP associate TCP control connection idle timeout exceeded")
+                                    break
+                                }
+                                continue
                             }
                         }
                     } catch (e: Exception) {

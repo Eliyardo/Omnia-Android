@@ -1,11 +1,14 @@
 package com.eliyardo.omnia.proxy
 
+import com.eliyardo.omnia.tunnel.TunnelEngine
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.URI
 import java.util.Base64
 
 class HttpProxyProtocolTest {
+
+    private val engine = TunnelEngine()
 
     @Test
     fun testConnectRequestParsing() {
@@ -36,16 +39,15 @@ class HttpProxyProtocolTest {
         val encoded = Base64.getEncoder().encodeToString(rawAuth.toByteArray())
         val header = "Proxy-Authorization: Basic $encoded"
 
-        val value = header.substringAfter(":").trim()
-        assertTrue(value.startsWith("Basic ", ignoreCase = true))
+        val server = HttpProxyServer(
+            tunnelEngine = engine,
+            authRequired = true,
+            authUsername = user,
+            authPassword = pass
+        )
 
-        val decoded = String(Base64.getDecoder().decode(value.substring(6)))
-        val colon = decoded.indexOf(':')
-        val parsedUser = decoded.substring(0, colon)
-        val parsedPass = decoded.substring(colon + 1)
-
-        assertEquals(user, parsedUser)
-        assertEquals(pass, parsedPass)
+        val isValid = server.validateAuth(header)
+        assertTrue("HttpProxyServer.validateAuth should accept matching credentials", isValid)
     }
 
     @Test
@@ -54,14 +56,15 @@ class HttpProxyProtocolTest {
         val encoded = Base64.getEncoder().encodeToString(rawAuth.toByteArray())
         val header = "Proxy-Authorization: Basic $encoded"
 
-        val value = header.substringAfter(":").trim()
-        val decoded = String(Base64.getDecoder().decode(value.substring(6)))
-        val colon = decoded.indexOf(':')
-        val parsedUser = decoded.substring(0, colon)
-        val parsedPass = decoded.substring(colon + 1)
+        val server = HttpProxyServer(
+            tunnelEngine = engine,
+            authRequired = true,
+            authUsername = "proxyuser",
+            authPassword = "secret123"
+        )
 
-        assertFalse("Should not match valid credentials",
-            parsedUser == "proxyuser" && parsedPass == "secret123")
+        val isValid = server.validateAuth(header)
+        assertFalse("HttpProxyServer.validateAuth should reject mismatched credentials", isValid)
     }
 
     @Test
@@ -99,10 +102,5 @@ class HttpProxyProtocolTest {
         assertEquals("example.org", host)
         assertEquals(8080, port)
         assertEquals("/api/v1/data?query=test", relativePath)
-
-        val method = "GET"
-        val version = "HTTP/1.1"
-        val rewrittenRequestLine = "$method $relativePath $version"
-        assertEquals("GET /api/v1/data?query=test HTTP/1.1", rewrittenRequestLine)
     }
 }

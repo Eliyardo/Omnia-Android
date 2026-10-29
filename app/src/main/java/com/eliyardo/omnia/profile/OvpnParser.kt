@@ -15,7 +15,7 @@ class OvpnParser {
             "cipher", "data-ciphers", "data-ciphers-fallback", "auth", "ncp-ciphers"
         )
 
-        private val UNSUPPORTED_DIRECTIVES = setOf(
+        val UNSUPPORTED_DIRECTIVES = setOf(
             "up", "down", "ipchange", "route-up", "route-pre-down",
             "client-connect", "client-disconnect", "learn-address",
             "auth-user-pass-verify", "tls-verify", "script-security",
@@ -40,6 +40,7 @@ class OvpnParser {
         }
 
         val lines = content.lines()
+        val sanitizedLines = mutableListOf<String>()
         var remoteHost = ""
         var remotePort = 1194
         var protocol = "udp"
@@ -63,10 +64,14 @@ class OvpnParser {
             val trimmed = line.trim()
 
             // Skip comments and empty lines when not in an inline block
-            if (!inInlineBlock && (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith(";"))) continue
+            if (!inInlineBlock && (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith(";"))) {
+                sanitizedLines.add(line)
+                continue
+            }
 
             // Handle inline block boundaries
             if (trimmed.startsWith("<") && !trimmed.startsWith("</")) {
+                sanitizedLines.add(line)
                 val tag = trimmed.removePrefix("<").removeSuffix(">").trim().lowercase()
                 if (tag in INLINE_TAGS) {
                     inInlineBlock = true
@@ -90,6 +95,7 @@ class OvpnParser {
             }
 
             if (trimmed.startsWith("</")) {
+                sanitizedLines.add(line)
                 if (currentInlineTag == "auth-user-pass") {
                     if (inlineAuthLines.isNotEmpty()) {
                         inlineUsername = inlineAuthLines.getOrNull(0)
@@ -102,6 +108,7 @@ class OvpnParser {
             }
 
             if (inInlineBlock) {
+                sanitizedLines.add(line)
                 if (currentInlineTag == "auth-user-pass" && trimmed.isNotEmpty()) {
                     inlineAuthLines.add(trimmed)
                 } else if (currentInlineTag == "ca" && trimmed.isNotEmpty()) {
@@ -114,11 +121,22 @@ class OvpnParser {
             val parts = trimmed.split("\\s+".toRegex())
             val directive = parts[0].lowercase()
 
+            if (directive in UNSUPPORTED_DIRECTIVES) {
+                unsupported.add(directive)
+                warnings.add("Directive '$directive' is unsupported and will be ignored")
+                continue
+            }
+
+            sanitizedLines.add(line)
+
             when (directive) {
                 "remote" -> {
-                    if (parts.size >= 2) remoteHost = parts[1]
-                    if (parts.size >= 3) remotePort = parts[2].toIntOrNull() ?: 1194
-                    if (parts.size >= 4) protocol = parts[3].lowercase()
+                    // Retain primary (first) remote; preserve subsequent remotes in rawContent for failover
+                    if (remoteHost.isEmpty()) {
+                        if (parts.size >= 2) remoteHost = parts[1]
+                        if (parts.size >= 3) remotePort = parts[2].toIntOrNull() ?: 1194
+                        if (parts.size >= 4) protocol = parts[3].lowercase()
+                    }
                 }
                 "proto" -> {
                     if (parts.size >= 2) protocol = parts[1].lowercase().removeSuffix("-client")
@@ -227,7 +245,7 @@ class OvpnParser {
         val profile = if (errors.isEmpty()) {
             OvpnProfile(
                 name = profileName,
-                rawContent = content,
+                rawContent = sanitizedLines.joinToString("\n"),
                 remoteHost = remoteHost,
                 remotePort = remotePort,
                 protocol = protocol,

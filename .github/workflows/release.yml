@@ -51,7 +51,8 @@ jobs:
           elif [ "$REF_TYPE" = "tag" ]; then
             TAG="$REF_NAME"
           else
-            TAG="v1.0.4"
+            echo "::error::No release tag provided for manual trigger or non-tag push."
+            exit 1
           fi
           
           # Enforce semantic tag format

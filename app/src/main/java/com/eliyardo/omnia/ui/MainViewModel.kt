@@ -20,8 +20,10 @@ import com.eliyardo.omnia.tunnel.TunnelEngine
 import com.eliyardo.omnia.OmniaApp
 import com.eliyardo.omnia.tunnel.TunnelState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -88,6 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _vpnConsentIntent = MutableStateFlow<Intent?>(null)
     val vpnConsentIntent: StateFlow<Intent?> = _vpnConsentIntent.asStateFlow()
 
+    private val serviceCollectJobs = mutableListOf<Job>()
+
     fun clearVpnConsent() {
         _vpnConsentIntent.value = null
     }
@@ -98,24 +102,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             service = localBinder.getService()
             bound = true
 
-            viewModelScope.launch {
-                service!!.tunnelEngine.state.collect { state ->
+            // Cancel any previous collection jobs before launching new ones
+            serviceCollectJobs.forEach { it.cancel() }
+            serviceCollectJobs.clear()
+
+            serviceCollectJobs.add(viewModelScope.launch {
+                service?.tunnelEngine?.state?.collect { state ->
                     _tunnelState.value = state
                 }
-            }
-            viewModelScope.launch {
-                service!!.proxyState.collect { state ->
+            })
+            serviceCollectJobs.add(viewModelScope.launch {
+                service?.proxyState?.collect { state ->
                     _proxyState.value = state
                 }
-            }
-            viewModelScope.launch {
-                service!!.tunnelEngine.stats.collect { stats ->
+            })
+            serviceCollectJobs.add(viewModelScope.launch {
+                service?.tunnelEngine?.stats?.collect { stats ->
                     _trafficStats.value = stats
                 }
-            }
+            })
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            serviceCollectJobs.forEach { it.cancel() }
+            serviceCollectJobs.clear()
             service = null
             bound = false
             _tunnelState.value = TunnelState.Disconnected
@@ -289,12 +299,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
 
-            val content = profileManager.getProfileContent(profile.id) ?: run {
-                _errorMessage.value = "Cannot read profile"
-                return
-            }
-
             viewModelScope.launch {
+                // Perform profile decryption on IO dispatcher instead of blocking main UI thread
+                val content = withContext(Dispatchers.IO) {
+                    profileManager.getProfileContent(profile.id)
+                } ?: run {
+                    _errorMessage.value = "Cannot read profile"
+                    return@launch
+                }
+
                 val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
                 if (isTun) {
                     val prepareIntent = android.net.VpnService.prepare(getApplication())
@@ -395,6 +408,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        serviceCollectJobs.forEach { it.cancel() }
+        serviceCollectJobs.clear()
         if (bound) {
             try {
                 getApplication<Application>().unbindService(serviceConnection)

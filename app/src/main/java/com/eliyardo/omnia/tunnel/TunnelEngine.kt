@@ -13,12 +13,17 @@ class TunnelEngine {
         private const val TAG = "TunnelEngine"
         
         init {
-            System.loadLibrary("omnia")
+            try {
+                System.loadLibrary("omnia")
+            } catch (e: UnsatisfiedLinkError) {
+                // Ignore in host unit tests where native library is not present
+            }
         }
     }
     
     @Volatile
     private var nativeHandle: Long = 0L
+    private val handleLock = java.util.concurrent.locks.ReentrantReadWriteLock()
     private val _state = MutableStateFlow<TunnelState>(TunnelState.Disconnected)
     val state: StateFlow<TunnelState> = _state.asStateFlow()
     
@@ -73,106 +78,161 @@ class TunnelEngine {
         upstreamProxyPass: String = "",
         upstreamProxyAllowCleartext: Boolean = false
     ): Boolean {
-        if (nativeHandle == 0L) {
-            Log.i(TAG, "Engine not initialized yet, initializing...")
-            if (!initialize()) {
-                Log.e(TAG, "Failed to initialize native engine")
-                return false
+        handleLock.writeLock().lock()
+        try {
+            if (nativeHandle == 0L) {
+                Log.i(TAG, "Engine not initialized yet, initializing...")
+                if (!initialize()) {
+                    Log.e(TAG, "Failed to initialize native engine")
+                    return false
+                }
             }
-        }
-        _state.value = TunnelState.Connecting()
-        return try {
-            nativeConnect(
-                nativeHandle,
-                profileContent,
-                username ?: "",
-                password ?: "",
-                isTunMode,
-                securityLevel,
-                enforceTls13,
-                protoOverride,
-                connTimeout,
-                ipv6Enabled,
-                bypassLanTun,
-                upstreamProxyHost,
-                upstreamProxyPort,
-                upstreamProxyUser,
-                upstreamProxyPass,
-                upstreamProxyAllowCleartext
-            ) == 0
-        } catch (t: Throwable) {
-            Log.e(TAG, "nativeConnect threw exception", t)
-            _state.value = TunnelState.Error("Native connect error: ${t.message}")
-            false
+            _state.value = TunnelState.Connecting()
+            return try {
+                nativeConnect(
+                    nativeHandle,
+                    profileContent,
+                    username ?: "",
+                    password ?: "",
+                    isTunMode,
+                    securityLevel,
+                    enforceTls13,
+                    protoOverride,
+                    connTimeout,
+                    ipv6Enabled,
+                    bypassLanTun,
+                    upstreamProxyHost,
+                    upstreamProxyPort,
+                    upstreamProxyUser,
+                    upstreamProxyPass,
+                    upstreamProxyAllowCleartext
+                ) == 0
+            } catch (t: Throwable) {
+                Log.e(TAG, "nativeConnect threw exception", t)
+                _state.value = TunnelState.Error("Native connect error: ${t.message}")
+                false
+            }
+        } finally {
+            handleLock.writeLock().unlock()
         }
     }
     
     @Synchronized
     fun disconnect() {
-        if (nativeHandle == 0L) return
-        nativeDisconnect(nativeHandle)
-        _state.value = TunnelState.Disconnected
-        lastStatsTime = 0L
-        lastBytesIn = 0L
-        lastBytesOut = 0L
-        _stats.value = TrafficStats()
-        connectionCallbacks.clear()
-        udpConnectionCallbacks.clear()
+        handleLock.writeLock().lock()
+        try {
+            if (nativeHandle == 0L) return
+            nativeDisconnect(nativeHandle)
+            _state.value = TunnelState.Disconnected
+            lastStatsTime = 0L
+            lastBytesIn = 0L
+            lastBytesOut = 0L
+            _stats.value = TrafficStats()
+            connectionCallbacks.clear()
+            udpConnectionCallbacks.clear()
+        } finally {
+            handleLock.writeLock().unlock()
+        }
     }
     
     @Synchronized
     fun destroy() {
-        if (nativeHandle == 0L) return
-        nativeDestroy(nativeHandle)
-        nativeHandle = 0L
-        _state.value = TunnelState.Disconnected
+        handleLock.writeLock().lock()
+        try {
+            if (nativeHandle == 0L) return
+            val handle = nativeHandle
+            nativeHandle = 0L
+            nativeDestroy(handle)
+            _state.value = TunnelState.Disconnected
+            connectionCallbacks.clear()
+            udpConnectionCallbacks.clear()
+        } finally {
+            handleLock.writeLock().unlock()
+        }
     }
     
     fun openConnection(host: String, port: Int, callback: TunnelConnectionCallback): Int {
-        if (nativeHandle == 0L) return -1
-        val callbackId = callbackIdGenerator.incrementAndGet()
-        val connId = nativeOpenConnection(nativeHandle, host, port, callbackId)
-        if (connId >= 0) {
-            connectionCallbacks[connId] = callback
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle == 0L) return -1
+            val callbackId = callbackIdGenerator.incrementAndGet()
+            val connId = nativeOpenConnection(nativeHandle, host, port, callbackId)
+            if (connId >= 0) {
+                connectionCallbacks[connId] = callback
+            }
+            return connId
+        } finally {
+            handleLock.readLock().unlock()
         }
-        return connId
     }
     
     fun sendData(connId: Int, data: ByteArray, offset: Int = 0, length: Int = data.size): Int {
-        if (nativeHandle == 0L) return -1
-        return nativeSendData(nativeHandle, connId, data, offset, length)
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle == 0L) return -1
+            return nativeSendData(nativeHandle, connId, data, offset, length)
+        } finally {
+            handleLock.readLock().unlock()
+        }
     }
     
     fun closeConnection(connId: Int) {
-        if (nativeHandle == 0L) return
-        nativeCloseConnection(nativeHandle, connId)
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle != 0L) {
+                nativeCloseConnection(nativeHandle, connId)
+            }
+        } finally {
+            handleLock.readLock().unlock()
+        }
         connectionCallbacks.remove(connId)
     }
 
     fun openUdpConnection(callback: TunnelUdpCallback): Int {
-        if (nativeHandle == 0L) return -1
-        val callbackId = callbackIdGenerator.incrementAndGet()
-        val connId = nativeOpenUdpConnection(nativeHandle, callbackId)
-        if (connId >= 0) {
-            udpConnectionCallbacks[connId] = callback
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle == 0L) return -1
+            val callbackId = callbackIdGenerator.incrementAndGet()
+            val connId = nativeOpenUdpConnection(nativeHandle, callbackId)
+            if (connId >= 0) {
+                udpConnectionCallbacks[connId] = callback
+            }
+            return connId
+        } finally {
+            handleLock.readLock().unlock()
         }
-        return connId
     }
 
     fun sendUdpData(connId: Int, host: String, port: Int, data: ByteArray, offset: Int = 0, length: Int = data.size): Int {
-        if (nativeHandle == 0L) return -1
-        return nativeSendUdpData(nativeHandle, connId, host, port, data, offset, length)
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle == 0L) return -1
+            return nativeSendUdpData(nativeHandle, connId, host, port, data, offset, length)
+        } finally {
+            handleLock.readLock().unlock()
+        }
     }
 
     fun closeUdpConnection(connId: Int) {
-        if (nativeHandle == 0L) return
-        nativeCloseUdpConnection(nativeHandle, connId)
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle != 0L) {
+                nativeCloseUdpConnection(nativeHandle, connId)
+            }
+        } finally {
+            handleLock.readLock().unlock()
+        }
         udpConnectionCallbacks.remove(connId)
     }
     
     fun resolveHostname(hostname: String): String? {
-        if (nativeHandle == 0L) return null
-        return nativeResolveHostname(nativeHandle, hostname)
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle == 0L) return null
+            return nativeResolveHostname(nativeHandle, hostname)
+        } finally {
+            handleLock.readLock().unlock()
+        }
     }
     
     // --- JNI callbacks (called from native code) ---
@@ -251,8 +311,15 @@ class TunnelEngine {
     }
 
     fun acknowledgeData(connId: Int, length: Int) {
-        if (nativeHandle == 0L || length <= 0) return
-        nativeAcknowledgeData(nativeHandle, connId, length)
+        if (length <= 0) return
+        handleLock.readLock().lock()
+        try {
+            if (nativeHandle != 0L) {
+                nativeAcknowledgeData(nativeHandle, connId, length)
+            }
+        } finally {
+            handleLock.readLock().unlock()
+        }
     }
 
     var onProtectSocketCallback: ((socket: Int) -> Boolean)? = null

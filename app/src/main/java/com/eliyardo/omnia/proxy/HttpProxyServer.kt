@@ -125,7 +125,7 @@ class HttpProxyServer(
     private suspend fun handleClient(clientSocket: Socket) = withContext(proxyDispatcher) {
         // Enforce short pre-authentication timeout to prevent slot exhaustion
         clientSocket.soTimeout = PRE_AUTH_TIMEOUT_MS
-        val input = clientSocket.getInputStream()
+        val input = java.io.BufferedInputStream(clientSocket.getInputStream(), BUFFER_SIZE)
         val output = clientSocket.getOutputStream()
         
         // Read HTTP request line and headers
@@ -170,7 +170,7 @@ class HttpProxyServer(
         }
     }
     
-    private fun validateAuth(authHeader: String?): Boolean {
+    internal fun validateAuth(authHeader: String?): Boolean {
         if (authHeader == null) return false
         // Fail-closed: refuse auth if server credentials are not properly set
         if (authUsername.isBlank() || authPassword.isBlank()) return false
@@ -182,9 +182,12 @@ class HttpProxyServer(
         if (!value.startsWith("Basic ", ignoreCase = true)) return false
         
         return try {
-            val decoded = String(android.util.Base64.decode(
-                value.substring(6), android.util.Base64.DEFAULT
-            ))
+            val decodedBytes = try {
+                android.util.Base64.decode(value.substring(6), android.util.Base64.DEFAULT)
+            } catch (_: Throwable) {
+                java.util.Base64.getDecoder().decode(value.substring(6))
+            }
+            val decoded = String(decodedBytes, Charsets.UTF_8)
             val colonIndex = decoded.indexOf(':')
             if (colonIndex < 0) return false
             
@@ -395,7 +398,8 @@ class HttpProxyServer(
         val rawPath = uri.rawPath
         val path = (if (rawPath.isNullOrEmpty()) "/" else rawPath) + (if (uri.rawQuery != null) "?${uri.rawQuery}" else "")
         
-        Log.d(TAG, "HTTP $method $host:$port$path")
+        // Strip sensitive URL query string from logcat
+        Log.d(TAG, "HTTP $method $host:$port")
         
         // Connect through tunnel
         val completableDeferred = CompletableDeferred<Boolean>()
@@ -465,7 +469,12 @@ class HttpProxyServer(
         }
         rewrittenRequest.append("Connection: close\r\n\r\n")
         
-        tunnelEngine.sendData(connId, rewrittenRequest.toString().toByteArray())
+        val sent = tunnelEngine.sendData(connId, rewrittenRequest.toString().toByteArray())
+        if (sent < 0) {
+            tunnelEngine.closeConnection(connId)
+            sendErrorResponse(clientOutput, 502, "Bad Gateway - failed to send request")
+            return
+        }
         
         // Set relay idle timeout for active plain HTTP streaming session
         clientSocket.soTimeout = RELAY_IDLE_TIMEOUT_MS
@@ -516,13 +525,12 @@ class HttpProxyServer(
         val buffer = ByteArray(MAX_HEADER_SIZE)
         var offset = 0
         val deadline = System.currentTimeMillis() + PRE_AUTH_TIMEOUT_MS
-        val bufferedInput = if (input is java.io.BufferedInputStream) input else java.io.BufferedInputStream(input, 4096)
         
         while (offset < MAX_HEADER_SIZE - 1) {
             if (System.currentTimeMillis() > deadline) {
                 return null // Slowloris timeout protection
             }
-            val b = bufferedInput.read()
+            val b = input.read()
             if (b < 0) return null
             buffer[offset++] = b.toByte()
             

@@ -26,6 +26,12 @@ data class OvpnProfile(
 ) {
     val isValid: Boolean get() = errors.isEmpty() && hasCa && !isCorrupted
     val hasInlineCredentials: Boolean get() = !inlineUsername.isNullOrBlank() && !inlinePassword.isNullOrBlank()
+
+    override fun toString(): String {
+        return "OvpnProfile(id=$id, name=$name, remoteHost=$remoteHost, remotePort=$remotePort, protocol=$protocol, " +
+            "hasAuth=$hasAuth, inlineUsername=$inlineUsername, inlinePassword=${if (inlinePassword != null) "[REDACTED]" else "null"}, " +
+            "rawContentLength=${rawContent.length}, isValid=$isValid, isCorrupted=$isCorrupted)"
+    }
 }
 
 data class ProfileValidationResult(

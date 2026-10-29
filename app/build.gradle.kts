@@ -11,9 +11,9 @@ android {
     compileSdk = 35
 
     val vCode = (project.findProperty("versionCode") as? String)?.toIntOrNull()
-        ?: System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10107
+        ?: System.getenv("VERSION_CODE")?.toIntOrNull() ?: 10108
     val vName = (project.findProperty("versionName") as? String)
-        ?: System.getenv("VERSION_NAME") ?: "1.1.7"
+        ?: System.getenv("VERSION_NAME") ?: "1.1.8"
 
     defaultConfig {
         applicationId = "com.eliyardo.omnia"
@@ -97,7 +97,8 @@ android {
                 if (requireReleaseSigning) {
                     throw GradleException("Release build requested with REQUIRE_RELEASE_SIGNING=true, but release keystore or credentials are missing/invalid!")
                 }
-                signingConfig = signingConfigs.getByName("debug")
+                println("=== Release keystore not configured; release build will be unsigned ===")
+                signingConfig = null
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

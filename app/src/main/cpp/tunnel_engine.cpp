@@ -525,21 +525,30 @@ void TunnelEngine::disconnect() {
     }
     ovpnClient.reset();
 
-    /* 3. Close and clear active proxy connections */
+    /* 3. Close active proxy connections without lock inversion deadlock */
+    std::vector<std::pair<int, bool>> connsToClose;
     {
         std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
         for (auto& [id, conn] : connections) {
             if (conn) {
                 conn->closing.store(true);
-                if (g_lwipTunnel) {
-                    if (conn->is_udp) {
-                        g_lwipTunnel->closeUdp(id);
-                    } else {
-                        g_lwipTunnel->closeTcp(id);
-                    }
-                }
+                connsToClose.emplace_back(id, conn->is_udp);
             }
         }
+    }
+
+    if (g_lwipTunnel) {
+        for (const auto& [id, isUdp] : connsToClose) {
+            if (isUdp) {
+                g_lwipTunnel->closeUdp(id);
+            } else {
+                g_lwipTunnel->closeTcp(id);
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
         connections.clear();
     }
 
@@ -663,7 +672,6 @@ void TunnelEngine::closeConnection(int connId) {
         auto it = connections.find(connId);
         if (it == connections.end()) return;
         conn = it->second;
-        connections.erase(it);
     }
 
     if (!conn) return;
@@ -672,6 +680,11 @@ void TunnelEngine::closeConnection(int connId) {
 
     if (g_lwipTunnel) {
         g_lwipTunnel->closeTcp(connId);
+    }
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
+        connections.erase(connId);
     }
 }
 
@@ -724,7 +737,6 @@ void TunnelEngine::closeUdpConnection(int connId) {
         auto it = connections.find(connId);
         if (it == connections.end()) return;
         conn = it->second;
-        connections.erase(it);
     }
 
     if (!conn) return;
@@ -733,6 +745,11 @@ void TunnelEngine::closeUdpConnection(int connId) {
 
     if (g_lwipTunnel) {
         g_lwipTunnel->closeUdp(connId);
+    }
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
+        connections.erase(connId);
     }
 }
 
@@ -817,14 +834,22 @@ void TunnelEngine::lwipEventLoop() {
 
     try {
         while (running.load()) {
+            /* Wait up to 20ms for incoming tun packets or timer deadline to avoid CPU busy spinning */
+            if (tunFd[1] >= 0) {
+                struct pollfd pfd;
+                pfd.fd = tunFd[1];
+                pfd.events = POLLIN;
+                pfd.revents = 0;
+                poll(&pfd, 1, 20);
+            } else {
+                usleep(20000);
+            }
+
             /* Process incoming IP packets from tun fd and TCP timers */
             if (g_lwipTunnel) {
                 g_lwipTunnel->processIncomingPackets();
                 g_lwipTunnel->poll();
             }
-
-            /* Small 1ms sleep to avoid pegging CPU while preserving low latency */
-            usleep(1000);
         }
     } catch (const std::exception& e) {
         LOGE("Exception in lwIP event loop: %s", e.what());

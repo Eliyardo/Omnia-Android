@@ -132,6 +132,7 @@ class ProxyVpnService : VpnService() {
     private var serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     val tunnelEngine = TunnelEngine()
+    private val profileManager by lazy { ProfileManager(applicationContext) }
     private var socks5Server: Socks5Server? = null
     private var httpProxyServer: HttpProxyServer? = null
     private val proxyLifecycleMutex = Mutex()
@@ -222,7 +223,10 @@ class ProxyVpnService : VpnService() {
                                 ok = true
                                 Log.i(TAG, "Bound socket $socket directly to active physical network $activeNet")
                             } finally {
-                                try { pfd.close() } catch (_: Exception) {}
+                                try {
+                                    pfd.detachFd() // Release ownership back to caller without closing the native socket
+                                    pfd.close()
+                                } catch (_: Exception) {}
                             }
                         }
                     }
@@ -338,7 +342,7 @@ class ProxyVpnService : VpnService() {
 
                     var profileContent = stagedSession?.profileContent
                     if (profileContent.isNullOrBlank() && !profileId.isNullOrBlank()) {
-                        profileContent = ProfileManager(applicationContext).getProfileContent(profileId)
+                        profileContent = profileManager.getProfileContent(profileId)
                     }
                     if (profileContent.isNullOrBlank()) {
                         @Suppress("DEPRECATION")
@@ -546,17 +550,39 @@ class ProxyVpnService : VpnService() {
                 }
             }
 
-            // DNS Configuration
+            // DNS Configuration - guarantee at least one valid DNS server is added to prevent DNS leaks
+            var dnsAdded = false
             val dnsPair = settings.resolveDnsIps(cachedDnsProvider, cachedCustomDnsPrimary, cachedCustomDnsSecondary)
             if (dnsPair != null) {
-                try { builder.addDnsServer(dnsPair.first) } catch (_: Exception) {}
-                try { builder.addDnsServer(dnsPair.second) } catch (_: Exception) {}
-            } else if (pushedDns.isNotEmpty()) {
-                pushedDns.forEach { dnsIp ->
-                    try { builder.addDnsServer(dnsIp) } catch (_: Exception) {}
+                try {
+                    builder.addDnsServer(dnsPair.first)
+                    dnsAdded = true
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to add primary custom DNS server: ${dnsPair.first}", e)
                 }
-            } else {
-                Log.w(TAG, "No DNS servers pushed by OpenVPN server; using 1.1.1.1 fallback")
+                if (dnsPair.second.isNotBlank()) {
+                    try {
+                        builder.addDnsServer(dnsPair.second)
+                        dnsAdded = true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to add secondary custom DNS server: ${dnsPair.second}", e)
+                    }
+                }
+            }
+
+            if (!dnsAdded && pushedDns.isNotEmpty()) {
+                pushedDns.forEach { dnsIp ->
+                    try {
+                        builder.addDnsServer(dnsIp)
+                        dnsAdded = true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to add pushed DNS server: $dnsIp", e)
+                    }
+                }
+            }
+
+            if (!dnsAdded) {
+                Log.w(TAG, "No valid custom or pushed DNS servers; enforcing 1.1.1.1 fallback to prevent DNS leak")
                 builder.addDnsServer("1.1.1.1")
             }
 
@@ -581,12 +607,14 @@ class ProxyVpnService : VpnService() {
                 }
             }
 
-            vpnInterface?.close()
+            // Establish new VPN interface before closing old blackhole interface to prevent leak window
+            val oldInterface = vpnInterface
             val pfd = builder.establish() ?: run {
                 Log.e(TAG, "VpnService.Builder.establish() returned null")
                 return -1
             }
             vpnInterface = pfd
+            try { oldInterface?.close() } catch (_: Exception) {}
             val dupPfd = pfd.dup()
             val fd = dupPfd?.detachFd() ?: -1
             Log.i(TAG, "VpnService.Builder.establish() successful: fd=$fd")
@@ -810,7 +838,7 @@ class ProxyVpnService : VpnService() {
         }
         serviceScope.launch {
             val autoReconnect = settings.autoReconnect.first()
-            val targetContent = lastProfileContent ?: lastProfileId?.let { ProfileManager(applicationContext).getProfileContent(it) }
+            val targetContent = lastProfileContent ?: lastProfileId?.let { profileManager.getProfileContent(it) }
             if (autoReconnect && targetContent != null) {
                 if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                     Log.w(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached. Aborting auto-reconnect.")
