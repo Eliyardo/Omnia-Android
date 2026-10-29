@@ -58,9 +58,6 @@ class AppSettings(private val context: Context) {
         val UPSTREAM_PROXY_PASSWORD = stringPreferencesKey("upstream_proxy_password")
         val UPSTREAM_PROXY_ALLOW_CLEARTEXT = booleanPreferencesKey("upstream_proxy_allow_cleartext")
 
-        // Enterprise Device ID
-        val DEVICE_ID = stringPreferencesKey("device_id")
-
         // Split Tunneling (Per-App Routing in TUN mode)
         val SPLIT_TUNNEL_ENABLED = booleanPreferencesKey("split_tunnel_enabled")
         val SPLIT_TUNNEL_MODE = stringPreferencesKey("split_tunnel_mode") // "allowlist" or "bypass"
@@ -153,7 +150,7 @@ class AppSettings(private val context: Context) {
 
     val vpnProtocolOverride: Flow<String> = context.dataStore.data.map { it[VPN_PROTOCOL_OVERRIDE] ?: PROTO_ADAPTIVE }
     val connectionTimeout: Flow<Int> = context.dataStore.data.map { it[CONNECTION_TIMEOUT] ?: TIMEOUT_1M }
-    val securityLevel: Flow<String> = context.dataStore.data.map { it[SECURITY_LEVEL] ?: SECURITY_LEVEL_LEGACY }
+    val securityLevel: Flow<String> = context.dataStore.data.map { it[SECURITY_LEVEL] ?: SECURITY_LEVEL_PREFERRED }
     val enforceTls13: Flow<Boolean> = context.dataStore.data.map { it[ENFORCE_TLS_1_3] ?: false }
     val confirmOnDisconnect: Flow<Boolean> = context.dataStore.data.map { it[CONFIRM_ON_DISCONNECT] ?: false }
     val bypassLanTun: Flow<Boolean> = context.dataStore.data.map { it[BYPASS_LAN_TUN] ?: true }
@@ -169,8 +166,6 @@ class AppSettings(private val context: Context) {
         } else ""
     }
     val upstreamProxyAllowCleartext: Flow<Boolean> = context.dataStore.data.map { it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] ?: true }
-
-    val deviceId: Flow<String> = context.dataStore.data.map { it[DEVICE_ID] ?: "" }
 
     val splitTunnelEnabled: Flow<Boolean> = context.dataStore.data.map { it[SPLIT_TUNNEL_ENABLED] ?: false }
     val splitTunnelMode: Flow<String> = context.dataStore.data.map { it[SPLIT_TUNNEL_MODE] ?: SPLIT_TUNNEL_ALLOWLIST }
@@ -342,18 +337,6 @@ class AppSettings(private val context: Context) {
             }
             if (allowCleartext != null) it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] = allowCleartext
         }
-    }
-
-    suspend fun getOrCreateDeviceId(): String {
-        val current: String? = context.dataStore.data.first()[DEVICE_ID]
-        if (!current.isNullOrBlank()) return current
-        val newId = java.util.UUID.randomUUID().toString()
-        context.dataStore.edit { it[DEVICE_ID] = newId }
-        return newId
-    }
-
-    suspend fun setDeviceId(id: String) {
-        context.dataStore.edit { it[DEVICE_ID] = id.trim() }
     }
 
     /**

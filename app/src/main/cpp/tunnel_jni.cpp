@@ -37,8 +37,7 @@ Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeConnect(
         jboolean ipv6Enabled, jboolean bypassLanTun,
         jstring upstreamProxyHost, jint upstreamProxyPort,
         jstring upstreamProxyUser, jstring upstreamProxyPass,
-        jboolean upstreamProxyAllowCleartext,
-        jstring deviceId) {
+        jboolean upstreamProxyAllowCleartext) {
     auto* engine = reinterpret_cast<TunnelEngine*>(handle);
     if (!engine) return -1;
 
@@ -50,7 +49,6 @@ Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeConnect(
     std::string upHost = jstringToString(env, upstreamProxyHost);
     std::string upUser = jstringToString(env, upstreamProxyUser);
     std::string upPass = jstringToString(env, upstreamProxyPass);
-    std::string devId = jstringToString(env, deviceId);
 
     return engine->connect(prof, user, pass,
                            isTunMode == JNI_TRUE,
@@ -64,8 +62,7 @@ Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeConnect(
                            (int)upstreamProxyPort,
                            upUser,
                            upPass,
-                           upstreamProxyAllowCleartext == JNI_TRUE,
-                           devId);
+                           upstreamProxyAllowCleartext == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL

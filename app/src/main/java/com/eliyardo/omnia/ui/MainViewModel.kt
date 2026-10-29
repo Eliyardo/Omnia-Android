@@ -126,9 +126,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         checkPreviousCrash()
         bindToService()
-        viewModelScope.launch {
-            settings.getOrCreateDeviceId()
-        }
     }
 
     private fun checkPreviousCrash() {

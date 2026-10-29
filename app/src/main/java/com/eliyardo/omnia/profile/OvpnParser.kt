@@ -250,9 +250,19 @@ class OvpnParser {
 
     private fun computeCaFingerprint(caPem: String): String? {
         return try {
-            val clean = caPem
-                .replace("-----BEGIN CERTIFICATE-----", "")
-                .replace("-----END CERTIFICATE-----", "")
+            // If certificate bundle contains multiple certs, isolate the first certificate block
+            val beginTag = "-----BEGIN CERTIFICATE-----"
+            val endTag = "-----END CERTIFICATE-----"
+            val firstCert = if (caPem.contains(beginTag) && caPem.contains(endTag)) {
+                val start = caPem.indexOf(beginTag) + beginTag.length
+                val end = caPem.indexOf(endTag, start)
+                if (end > start) caPem.substring(start, end) else caPem
+            } else {
+                caPem
+            }
+            val clean = firstCert
+                .replace(beginTag, "")
+                .replace(endTag, "")
                 .replace("\\s+".toRegex(), "")
             if (clean.isEmpty()) return null
             val bytes = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)

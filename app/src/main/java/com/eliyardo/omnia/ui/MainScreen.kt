@@ -13,6 +13,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
@@ -261,17 +263,45 @@ fun MainScreen(viewModel: MainViewModel) {
         }
     }
 
-    if (showSettings) {
-        SettingsScreen(
-            viewModel = viewModel,
-            onBack = { showSettings = false }
-        )
-        return
-    }
-
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = MaterialTheme.colorScheme.background,
+    AnimatedContent(
+        targetState = showSettings,
+        transitionSpec = {
+            if (targetState) {
+                // Main -> Settings: slide in from right with subtle fade, exit towards left
+                (slideInHorizontally(
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                    initialOffsetX = { fullWidth -> fullWidth }
+                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
+                    slideOutHorizontally(
+                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                        targetOffsetX = { fullWidth -> -fullWidth / 4 }
+                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
+                )
+            } else {
+                // Settings -> Main: slide in from left with subtle fade, exit towards right
+                (slideInHorizontally(
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                    initialOffsetX = { fullWidth -> -fullWidth / 4 }
+                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
+                    slideOutHorizontally(
+                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                        targetOffsetX = { fullWidth -> fullWidth }
+                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
+                )
+            }
+        },
+        label = "MainSettingsTransition",
+        modifier = Modifier.fillMaxSize()
+    ) { inSettings ->
+        if (inSettings) {
+            SettingsScreen(
+                viewModel = viewModel,
+                onBack = { showSettings = false }
+            )
+        } else {
+            Scaffold(
+                snackbarHost = { SnackbarHost(snackbarHostState) },
+                containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -421,6 +451,8 @@ fun MainScreen(viewModel: MainViewModel) {
             )
         }
     }
+}
+}
 }
 
 @Composable

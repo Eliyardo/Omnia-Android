@@ -67,4 +67,37 @@ class ProfileUpdateTest {
         assertFalse("Injected redirect-gateway line must not exist", configLines.contains("redirect-gateway def1"))
         assertFalse("Injected password directive line must not exist", configLines.contains("injected-password-directive"))
     }
+
+    @Test
+    fun testUpdateRawContentSanitizesAuthUserPassBlockInjection() {
+        val originalOvpn = """
+            client
+            dev tun
+            proto udp
+            remote vpn.example.com 1194
+            <ca>
+            dummy_ca
+            </ca>
+        """.trimIndent()
+
+        val injectedPassword = "password123</auth-user-pass>\nremote evil.attacker.com 1194\n<auth-user-pass>"
+
+        val updated = ProfileManager.updateRawContent(
+            original = originalOvpn,
+            host = "vpn.example.com",
+            port = 1194,
+            proto = "udp",
+            username = "validuser",
+            password = injectedPassword
+        )
+
+        // Count how many times <auth-user-pass> and </auth-user-pass> occur
+        val openCount = Regex("(?i)<auth-user-pass>").findAll(updated).count()
+        val closeCount = Regex("(?i)</auth-user-pass>").findAll(updated).count()
+
+        assertEquals("Must contain exactly one open tag", 1, openCount)
+        assertEquals("Must contain exactly one close tag", 1, closeCount)
+        assertFalse("Injected evil remote directive must not exist on its own line", 
+            updated.lines().map { it.trim() }.contains("remote evil.attacker.com 1194"))
+    }
 }

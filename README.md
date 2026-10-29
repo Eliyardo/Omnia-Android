@@ -30,8 +30,8 @@ The application operates in two distinct modes:
 ### Cryptographic Configuration & Protocol Controls
 - **OpenVPN 3 Core & OpenSSL 3**: Backed by the official OpenVPN 3 C++ client engine and OpenSSL 3 for protocol processing.
 - **3-Tier Cryptographic Security Levels**:
-  - *Preferred*: Restricts ciphers to modern AEAD suites (AES-256-GCM, AES-128-GCM, CHACHA20-POLY1305), enforces strict certificate verification, and disallows SHA-1 signatures.
-  - *Legacy (Default)*: Permits standard 128-bit ciphers and legacy certificates for compatibility with existing network infrastructure.
+  - *Preferred (Default)*: Restricts ciphers to modern AEAD suites (AES-256-GCM, AES-128-GCM, CHACHA20-POLY1305), enforces strict certificate verification, and disallows weak signatures.
+  - *Legacy*: Permits standard ciphers (including AES-CBC and BF-CBC) and legacy certificates for compatibility with existing network infrastructure.
   - *Insecure*: Disables certificate profile restrictions when connecting to legacy servers with outdated algorithms.
 - **Enforce TLS 1.3**: Optional toggle to require a minimum of TLS 1.3 for the control channel handshake.
 - **Protocol Override**: Configurable transport selection:
@@ -43,8 +43,10 @@ The application operates in two distinct modes:
 - **Confirmation on Disconnect**: Optional confirmation dialog before tearing down an active session to prevent inadvertent disconnection.
 
 ### Network Routing & Integration
+- **Kill Switch (Block Traffic on Drop)**: In TUN mode, preserves the virtual interface and blackhole routing (`0.0.0.0/0` and `::/0`) upon unexpected connection drops, preventing unencrypted traffic leaks until manually restored or disconnected.
 - **Per-App Split Tunneling**: Available in TUN mode. Supports both allowlist (only selected applications use the tunnel) and denylist (selected applications bypass the tunnel) rules.
-- **Bypass Local LAN**: Excludes RFC 1918 private IPv4 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`) and local IPv6 subnets (`fc00::/7`, `fe80::/10`) using `excludeRoute` on Android 13+ (API 33+), ensuring local network devices (printers, gateways, home servers) remain reachable.
+- **Bypass Local LAN**: Dynamically excludes the active network's local link-subnet using `excludeRoute` on Android 13+ (API 33+), ensuring local network devices (printers, gateways, home servers) remain reachable without blanket-leaking private enterprise IP ranges.
+- **LAN Proxy Sharing**: In Proxy Mode, allows binding local SOCKS5 and HTTP proxy interfaces to `0.0.0.0` with optional username/password authentication so other devices on the local Wi-Fi network can route through the tunnel.
 - **Upstream HTTP Proxy**: Connects to OpenVPN servers via an upstream HTTP proxy using HTTP CONNECT tunneling, with optional Basic authentication. Functions across both TUN and Proxy modes.
 
 ### DNS Resolution & Leak Prevention
@@ -55,9 +57,8 @@ The application operates in two distinct modes:
 
 ### Profile & Credential Management
 - **Profile Import**: Parses standard `.ovpn` configuration files, supporting inline blocks (`<ca>`, `<cert>`, `<key>`, `<tls-auth>`, `<tls-crypt>`) and external certificate references.
-- **Encrypted Credential Storage**: Passwords and proxy credentials are encrypted at rest using AES-256-GCM backed by the Android Keystore.
+- **Encrypted Credential Storage**: Passwords and proxy credentials are encrypted at rest using AES-256-GCM backed by the Android Keystore. Profiles are staged and stored via AES-256-GCM AEAD encryption.
 - **In-App Profile Editor**: Allows modifying remote addresses, ports, protocols, and authentication credentials with preservation of secondary remote endpoints.
-- **Enterprise Device ID**: Generates a persistent hardware UUID for server-side MDM policies and device tracking.
 
 ---
 
@@ -162,10 +163,10 @@ cd Omnia-Android
 ```
 
 Release APKs are output to `app/build/outputs/apk/release/`:
-- `Omnia-1.1.2-arm64-v8a-release.apk`
-- `Omnia-1.1.2-armeabi-v7a-release.apk`
-- `Omnia-1.1.2-x86_64-release.apk`
-- `Omnia-1.1.2-universal-release.apk`
+- `Omnia-1.1.3-arm64-v8a-release.apk`
+- `Omnia-1.1.3-armeabi-v7a-release.apk`
+- `Omnia-1.1.3-x86_64-release.apk`
+- `Omnia-1.1.3-universal-release.apk`
 
 ---
 

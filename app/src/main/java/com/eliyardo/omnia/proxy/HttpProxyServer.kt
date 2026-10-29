@@ -31,7 +31,7 @@ class HttpProxyServer(
         private const val PRE_AUTH_TIMEOUT_MS = 5000
         private const val MAX_HEADER_SIZE = 8192
         private const val MAX_CONCURRENT_CONNECTIONS = 64
-        private const val CHANNEL_CAPACITY = 32
+        private const val CHANNEL_CAPACITY = 128
     }
     
     private var serverSocket: ServerSocket? = null
@@ -258,7 +258,14 @@ class HttpProxyServer(
             
             override fun onDataReceived(connId: Int, data: ByteArray, offset: Int, length: Int) {
                 val copy = data.copyOfRange(offset, offset + length)
-                dataChannel.trySend(copy)
+                val result = dataChannel.trySend(copy)
+                if (result.isFailure && !connectionClosed.get()) {
+                    Log.w(TAG, "Proxy relay channel full or closed (connId=$connId); aborting connection to prevent data loss")
+                    connectionClosed.set(true)
+                    dataChannel.close()
+                    tunnelEngine.closeConnection(connId)
+                    try { clientSocket.close() } catch (_: Exception) {}
+                }
             }
             
             override fun onConnectionClosed(connId: Int, reason: String) {
@@ -389,7 +396,15 @@ class HttpProxyServer(
         val callback = object : TunnelEngine.TunnelConnectionCallback {
             override fun onConnected(connId: Int) { completableDeferred.complete(true) }
             override fun onDataReceived(connId: Int, data: ByteArray, offset: Int, length: Int) {
-                dataChannel.trySend(data.copyOfRange(offset, offset + length))
+                val copy = data.copyOfRange(offset, offset + length)
+                val result = dataChannel.trySend(copy)
+                if (result.isFailure && !connectionClosed.get()) {
+                    Log.w(TAG, "Plain HTTP relay channel full or closed (connId=$connId); aborting connection to prevent data loss")
+                    connectionClosed.set(true)
+                    dataChannel.close()
+                    tunnelEngine.closeConnection(connId)
+                    try { clientSocket.close() } catch (_: Exception) {}
+                }
             }
             override fun onConnectionClosed(connId: Int, reason: String) {
                 connectionClosed.set(true)
@@ -491,13 +506,14 @@ class HttpProxyServer(
     private fun readHttpHeaders(input: InputStream): ByteArray? {
         val buffer = ByteArray(MAX_HEADER_SIZE)
         var offset = 0
-        val deadline = System.currentTimeMillis() + CONNECT_TIMEOUT_MS
+        val deadline = System.currentTimeMillis() + PRE_AUTH_TIMEOUT_MS
+        val bufferedInput = if (input is java.io.BufferedInputStream) input else java.io.BufferedInputStream(input, 4096)
         
         while (offset < MAX_HEADER_SIZE - 1) {
             if (System.currentTimeMillis() > deadline) {
                 return null // Slowloris timeout protection
             }
-            val b = input.read()
+            val b = bufferedInput.read()
             if (b < 0) return null
             buffer[offset++] = b.toByte()
             

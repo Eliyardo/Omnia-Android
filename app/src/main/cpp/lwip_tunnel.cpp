@@ -116,13 +116,19 @@ void LwipTunnel::setDnsServers(const std::string& dns1, const std::string& dns2)
 
     if (!dns1.empty()) {
         ip_addr_t dnsAddr;
-        ipaddr_aton(dns1.c_str(), &dnsAddr);
-        dns_setserver(0, &dnsAddr);
+        if (ipaddr_aton(dns1.c_str(), &dnsAddr) == 1) {
+            dns_setserver(0, &dnsAddr);
+        } else {
+            LOGW("setDnsServers: invalid IP address '%s'", dns1.c_str());
+        }
     }
     if (!dns2.empty()) {
         ip_addr_t dnsAddr;
-        ipaddr_aton(dns2.c_str(), &dnsAddr);
-        dns_setserver(1, &dnsAddr);
+        if (ipaddr_aton(dns2.c_str(), &dnsAddr) == 1) {
+            dns_setserver(1, &dnsAddr);
+        } else {
+            LOGW("setDnsServers: invalid IP address '%s'", dns2.c_str());
+        }
     }
 
     LOGI("lwIP DNS servers updated dynamically: DNS1=%s, DNS2=%s",
@@ -139,11 +145,13 @@ void LwipTunnel::processIncomingPackets() {
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
     if (!initialized || tunFd < 0) return;
 
-    /* Non-blocking read of IP packets from the tun fd */
-    uint8_t buffer[4096];
+    /* Read of IP packets from the tun fd (sized for max IP packet size 64KB) */
+    static thread_local std::vector<uint8_t> packetBuffer(65536);
+    uint8_t* buffer = packetBuffer.data();
+    size_t bufSize = packetBuffer.size();
 
     for (int i = 0; i < 64; i++) {  /* Process up to 64 packets per call */
-        ssize_t len = read(tunFd, buffer, sizeof(buffer));
+        ssize_t len = read(tunFd, buffer, bufSize);
         if (len <= 0) {
             if (len < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 LOGE("Error reading from tun fd: %s", strerror(errno));
@@ -548,9 +556,9 @@ err_t LwipTunnel::tcpRecvCb(void* arg, struct tcp_pcb* tpcb, struct pbuf* p, err
     }
 
     /* Copy data from pbuf chain */
-    uint8_t buffer[32768];
-    u16_t totalLen = (p->tot_len < (u16_t)sizeof(buffer)) ? p->tot_len : (u16_t)sizeof(buffer);
-    pbuf_copy_partial(p, buffer, totalLen, 0);
+    u16_t totalLen = p->tot_len;
+    std::vector<uint8_t> buffer(totalLen);
+    pbuf_copy_partial(p, buffer.data(), totalLen, 0);
 
     /* Free pbuf memory immediately.
      * Note: We intentionally do NOT call tcp_recved() here.
@@ -559,7 +567,7 @@ err_t LwipTunnel::tcpRecvCb(void* arg, struct tcp_pcb* tpcb, struct pbuf* p, err
     pbuf_free(p);
 
     if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {
-        g_activeLwipTunnel->engine->onLwipDataReceived((int)connId, buffer, totalLen);
+        g_activeLwipTunnel->engine->onLwipDataReceived((int)connId, buffer.data(), totalLen);
     }
 
     return ERR_OK;
@@ -629,14 +637,14 @@ void LwipTunnel::udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
         ipaddr_ntoa_r(addr, ipStr, sizeof(ipStr));
     }
 
-    uint8_t buffer[65536];
-    u16_t totalLen = (p->tot_len < (u16_t)sizeof(buffer)) ? p->tot_len : (u16_t)sizeof(buffer);
-    pbuf_copy_partial(p, buffer, totalLen, 0);
+    u16_t totalLen = p->tot_len;
+    std::vector<uint8_t> buffer(totalLen);
+    pbuf_copy_partial(p, buffer.data(), totalLen, 0);
 
     pbuf_free(p);
 
     if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {
-        g_activeLwipTunnel->engine->onLwipUdpReceived((int)connId, ipStr, (int)port, buffer, (int)totalLen);
+        g_activeLwipTunnel->engine->onLwipUdpReceived((int)connId, ipStr, (int)port, buffer.data(), (int)totalLen);
     }
 }
 

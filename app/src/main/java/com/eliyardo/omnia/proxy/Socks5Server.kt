@@ -51,7 +51,7 @@ class Socks5Server(
         private const val CONNECT_TIMEOUT_MS = 30000
         private const val PRE_AUTH_TIMEOUT_MS = 5000
         private const val MAX_CONCURRENT_CONNECTIONS = 64
-        private const val CHANNEL_CAPACITY = 32
+        private const val CHANNEL_CAPACITY = 128
     }
     
     private var serverSocket: ServerSocket? = null
@@ -218,8 +218,8 @@ class Socks5Server(
         val passwordBytes = ByteArray(plen)
         readFully(input, passwordBytes)
         
-        val username = String(usernameBytes)
-        val password = String(passwordBytes)
+        val username = String(usernameBytes, Charsets.UTF_8)
+        val password = String(passwordBytes, Charsets.UTF_8)
         
         val userMatches = java.security.MessageDigest.isEqual(
             username.toByteArray(Charsets.UTF_8),
@@ -322,7 +322,14 @@ class Socks5Server(
             
             override fun onDataReceived(connId: Int, data: ByteArray, offset: Int, length: Int) {
                 val copy = data.copyOfRange(offset, offset + length)
-                dataChannel.trySend(copy)
+                val result = dataChannel.trySend(copy)
+                if (result.isFailure && !connectionClosed.get()) {
+                    Log.w(TAG, "SOCKS5 relay channel full or closed (connId=$connId); aborting connection to prevent data loss")
+                    connectionClosed.set(true)
+                    dataChannel.close()
+                    tunnelEngine.closeConnection(connId)
+                    try { clientSocket.close() } catch (_: Exception) {}
+                }
             }
             
             override fun onConnectionClosed(connId: Int, reason: String) {

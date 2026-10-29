@@ -104,8 +104,7 @@ public:
                 int upstreamProxyPort = 0,
                 const std::string& upstreamProxyUser = "",
                 const std::string& upstreamProxyPass = "",
-                bool upstreamProxyAllowCleartext = true,
-                const std::string& deviceId = "");
+                bool upstreamProxyAllowCleartext = true);
     void disconnect();
     void destroy();
     void setCustomDns(const std::string& dns1, const std::string& dns2);
@@ -161,8 +160,7 @@ private:
                     bool ipv6Enabled, bool bypassLanTun,
                     const std::string& upstreamProxyHost, int upstreamProxyPort,
                     const std::string& upstreamProxyUser, const std::string& upstreamProxyPass,
-                    bool upstreamProxyAllowCleartext,
-                    const std::string& deviceId);
+                    bool upstreamProxyAllowCleartext);
 
     /* Traffic stats */
     std::atomic<uint64_t> bytesIn{0};

@@ -266,8 +266,7 @@ int TunnelEngine::connect(const std::string& profile, const std::string& usernam
                           bool ipv6Enabled, bool bypassLanTun,
                           const std::string& upstreamProxyHost, int upstreamProxyPort,
                           const std::string& upstreamProxyUser, const std::string& upstreamProxyPass,
-                          bool upstreamProxyAllowCleartext,
-                          const std::string& deviceId) {
+                          bool upstreamProxyAllowCleartext) {
     if (running.load()) {
         disconnect();
     }
@@ -328,7 +327,7 @@ int TunnelEngine::connect(const std::string& profile, const std::string& usernam
                              ipv6Enabled, bypassLanTun,
                              upstreamProxyHost, upstreamProxyPort,
                              upstreamProxyUser, upstreamProxyPass,
-                             upstreamProxyAllowCleartext, deviceId);
+                             upstreamProxyAllowCleartext);
     statsThread = std::thread(&TunnelEngine::statsLoop, this);
 
     return 0;
@@ -340,8 +339,7 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
                               bool ipv6Enabled, bool bypassLanTun,
                               const std::string& upstreamProxyHost, int upstreamProxyPort,
                               const std::string& upstreamProxyUser, const std::string& upstreamProxyPass,
-                              bool upstreamProxyAllowCleartext,
-                              const std::string& deviceId) {
+                              bool upstreamProxyAllowCleartext) {
     pthread_setname_np(pthread_self(), "ovpn-worker");
 
     if (!ovpnClient) return;
@@ -412,11 +410,6 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
             config.proxyPassword = upstreamProxyPass;
             config.proxyAllowCleartextAuth = upstreamProxyAllowCleartext;
             callbacks.log(3, "Upstream HTTP Proxy active: %s:%d", upstreamProxyHost.c_str(), upstreamProxyPort);
-        }
-
-        // Enterprise Device ID
-        if (!deviceId.empty()) {
-            config.hwAddrOverride = deviceId;
         }
 
         // LAN Access / Route Emulation

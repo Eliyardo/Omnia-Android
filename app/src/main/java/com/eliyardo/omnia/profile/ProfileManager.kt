@@ -37,11 +37,13 @@ class ProfileManager(private val context: Context) {
             username: String?,
             password: String?
         ): String {
-            // Sanitize all inputs against CRLF directive injection
+            // Sanitize all inputs against CRLF and XML-style block directive injection
             val safeHost = host.trim().replace("\r", "").replace("\n", "")
             val safeProto = proto.trim().replace("\r", "").replace("\n", "").lowercase()
             val safeUsername = username?.trim()?.replace("\r", "")?.replace("\n", "")
+                ?.replace("(?i)</?auth-user-pass>".toRegex(), "")
             val safePassword = password?.replace("\r", "")?.replace("\n", "")
+                ?.replace("(?i)</?auth-user-pass>".toRegex(), "")
 
             val lines = original.lines()
             var remoteUpdated = false
@@ -150,75 +152,77 @@ class ProfileManager(private val context: Context) {
 
     @Synchronized
     fun loadProfiles() {
-        val loaded = mutableListOf<OvpnProfile>()
-        val metaFiles = profilesDir.listFiles { _, name -> name.endsWith(".meta") } ?: emptyArray()
+        try {
+            val loaded = mutableListOf<OvpnProfile>()
+            val metaFiles = profilesDir.listFiles { _, name -> name.endsWith(".meta") } ?: emptyArray()
 
-        for (metaFile in metaFiles) {
-            try {
-                val id = metaFile.nameWithoutExtension
-                val contentFile = File(profilesDir, "$id.ovpn")
-                if (!contentFile.exists()) {
-                    metaFile.delete()
-                    continue
-                }
+            for (metaFile in metaFiles) {
+                try {
+                    val id = metaFile.nameWithoutExtension
+                    val contentFile = File(profilesDir, "$id.ovpn")
+                    if (!contentFile.exists()) {
+                        metaFile.delete()
+                        continue
+                    }
 
-                val metaLines = metaFile.readLines()
-                val name = metaLines.getOrNull(0) ?: "Unknown"
-                val importedAt = metaLines.getOrNull(1)?.toLongOrNull() ?: 0L
+                    val metaLines = metaFile.readLines()
+                    val name = metaLines.getOrNull(0) ?: "Unknown"
+                    val importedAt = metaLines.getOrNull(1)?.toLongOrNull() ?: 0L
 
-                var content = readEncryptedProfile(id)
-                if (content == null) {
-                    // Check if plaintext migration is possible (e.g. from v1.0.0 unencrypted file)
-                    val rawText = try { contentFile.readText() } catch (_: Exception) { "" }
-                    if (rawText.contains("client") || rawText.contains("remote ") || rawText.contains("dev tun")) {
-                        try {
-                            writeEncryptedProfile(id, rawText)
-                            content = rawText
-                            Log.i(TAG, "Successfully migrated plaintext profile $id to encrypted storage")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed migrating plaintext profile $id", e)
+                    var content = readEncryptedProfile(id)
+                    if (content == null) {
+                        // Check if plaintext migration is possible (e.g. from v1.0.0 unencrypted file)
+                        val rawText = try { contentFile.readText() } catch (_: Exception) { "" }
+                        if (rawText.contains("client") || rawText.contains("remote ") || rawText.contains("dev tun")) {
+                            try {
+                                writeEncryptedProfile(id, rawText)
+                                content = rawText
+                                Log.i(TAG, "Successfully migrated plaintext profile $id to encrypted storage")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Failed migrating plaintext profile $id", e)
+                            }
                         }
                     }
-                }
 
-                if (content != null) {
-                    val result = parser.parse(content, name)
-                    result.profile?.let { profile ->
-                        loaded.add(profile.copy(id = id, name = name, importedAt = importedAt))
-                    }
-                } else {
-                    // Keystore key invalid or ciphertext corrupted: surface clearly in UI rather than dropping silently (M8)
-                    Log.w(TAG, "Profile $id could not be decrypted with current Keystore key; surfacing as corrupted")
-                    loaded.add(
-                        OvpnProfile(
-                            id = id,
-                            name = name,
-                            rawContent = "",
-                            importedAt = importedAt,
-                            isCorrupted = true,
-                            decryptionError = "Profile cannot be decrypted with current Android Keystore key",
-                            errors = listOf("Decryption failed")
+                    if (content != null) {
+                        val result = parser.parse(content, name)
+                        result.profile?.let { profile ->
+                            loaded.add(profile.copy(id = id, name = name, importedAt = importedAt))
+                        }
+                    } else {
+                        // Keystore key invalid or ciphertext corrupted: surface clearly in UI rather than dropping silently (M8)
+                        Log.w(TAG, "Profile $id could not be decrypted with current Keystore key; surfacing as corrupted")
+                        loaded.add(
+                            OvpnProfile(
+                                id = id,
+                                name = name,
+                                rawContent = "",
+                                importedAt = importedAt,
+                                isCorrupted = true,
+                                decryptionError = "Profile cannot be decrypted with current Android Keystore key",
+                                errors = listOf("Decryption failed")
+                            )
                         )
-                    )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load profile: ${metaFile.name}", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load profile: ${metaFile.name}", e)
             }
-        }
 
-        _profiles.value = loaded
+            _profiles.value = loaded
 
-        // Load active profile ID
-        val activeIdFile = File(profilesDir, ACTIVE_PROFILE_FILE)
-        if (activeIdFile.exists()) {
-            val activeId = activeIdFile.readText().trim()
-            _activeProfile.value = loaded.find { it.id == activeId } ?: loaded.firstOrNull { !it.isCorrupted }
-        } else if (loaded.isNotEmpty()) {
-            _activeProfile.value = loaded.firstOrNull { !it.isCorrupted }
-        }
-
-        if (!loadedDeferred.isCompleted) {
-            loadedDeferred.complete(Unit)
+            // Load active profile ID
+            val activeIdFile = File(profilesDir, ACTIVE_PROFILE_FILE)
+            if (activeIdFile.exists()) {
+                val activeId = activeIdFile.readText().trim()
+                _activeProfile.value = loaded.find { it.id == activeId } ?: loaded.firstOrNull { !it.isCorrupted }
+            } else if (loaded.isNotEmpty()) {
+                _activeProfile.value = loaded.firstOrNull { !it.isCorrupted }
+            }
+        } finally {
+            if (!loadedDeferred.isCompleted) {
+                loadedDeferred.complete(Unit)
+            }
         }
     }
 
@@ -230,8 +234,10 @@ class ProfileManager(private val context: Context) {
         fileName: String,
         forcedName: String? = null
     ): ProfileValidationResult = mutex.withLock {
+        awaitLoaded()
         withContext(Dispatchers.IO) {
-            if (content.length > MAX_PROFILE_BYTES) {
+            val contentBytes = content.toByteArray(Charsets.UTF_8)
+            if (contentBytes.size > MAX_PROFILE_BYTES) {
                 return@withContext ProfileValidationResult(
                     null,
                     listOf("Profile exceeds the 1 MB safety limit. Import rejected."),
@@ -322,15 +328,22 @@ class ProfileManager(private val context: Context) {
 
     private fun writeEncryptedProfile(id: String, content: String) {
         val targetFile = File(profilesDir, "$id.ovpn")
-        val tmpFile = File(profilesDir, "$id.tmp")
-        if (tmpFile.exists()) {
-            tmpFile.delete()
+        val stagingDir = File(profilesDir, ".staging")
+        if (!stagingDir.exists()) {
+            stagingDir.mkdirs()
+        }
+        val stagingFile = File(stagingDir, "$id.ovpn")
+        if (stagingFile.exists()) {
+            stagingFile.delete()
         }
 
         try {
+            // AndroidX EncryptedFile binds mFile.getName() as AAD into the streaming AEAD ciphertext.
+            // By staging the file in .staging/$id.ovpn, mFile.getName() is identical to the target ($id.ovpn),
+            // preserving AES-GCM authentication when atomically moved into profilesDir/$id.ovpn (Claude N1).
             val encryptedFile = EncryptedFile.Builder(
                 context,
-                tmpFile,
+                stagingFile,
                 masterKey,
                 EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
             ).build()
@@ -345,15 +358,15 @@ class ProfileManager(private val context: Context) {
             // Atomic replace: if move succeeds, targetFile is updated atomically.
             // If encryption fails before this point, targetFile is NEVER touched (H8).
             Files.move(
-                tmpFile.toPath(),
+                stagingFile.toPath(),
                 targetFile.toPath(),
                 StandardCopyOption.ATOMIC_MOVE,
                 StandardCopyOption.REPLACE_EXISTING
             )
         } catch (e: Exception) {
             Log.e(TAG, "Encryption failed for profile $id. Preserving existing profile if present.", e)
-            if (tmpFile.exists()) {
-                try { tmpFile.delete() } catch (_: Exception) {}
+            if (stagingFile.exists()) {
+                try { stagingFile.delete() } catch (_: Exception) {}
             }
             throw IOException("Secure profile encryption failed; profile storage aborted", e)
         }
@@ -400,9 +413,11 @@ class ProfileManager(private val context: Context) {
             try {
                 val ovpnFile = File(profilesDir, "$profileId.ovpn")
                 val tmpFile = File(profilesDir, "$profileId.tmp")
+                val stagingFile = File(File(profilesDir, ".staging"), "$profileId.ovpn")
                 val metaFile = File(profilesDir, "$profileId.meta")
                 ovpnFile.delete()
                 tmpFile.delete()
+                stagingFile.delete()
                 metaFile.delete()
                 Log.d(TAG, "Deleted profile $profileId files")
             } catch (e: Exception) {

@@ -90,7 +90,8 @@ class ProxyVpnService : VpnService() {
     private var cachedUpstreamProxyUsername: String = ""
     private var cachedUpstreamProxyPassword: String = ""
     private var cachedUpstreamProxyAllowCleartext: Boolean = true
-    private var cachedDeviceId: String = ""
+    private var isUserInitiatedDisconnect: Boolean = false
+    private var isKillSwitchBlocking: Boolean = false
     private var cachedDnsProvider: String = AppSettings.DNS_PROVIDER_SERVER
     private var cachedCustomDnsPrimary: String = ""
     private var cachedCustomDnsSecondary: String = ""
@@ -185,7 +186,6 @@ class ProxyVpnService : VpnService() {
             launch { settings.upstreamProxyUsername.collect { cachedUpstreamProxyUsername = it } }
             launch { settings.upstreamProxyPassword.collect { cachedUpstreamProxyPassword = it } }
             launch { settings.upstreamProxyAllowCleartext.collect { cachedUpstreamProxyAllowCleartext = it } }
-            launch { settings.deviceId.collect { cachedDeviceId = it } }
             launch {
                 settings.dnsProvider.collect {
                     cachedDnsProvider = it
@@ -257,6 +257,8 @@ class ProxyVpnService : VpnService() {
         try {
             when (intent?.action) {
                 ACTION_CONNECT -> {
+                    isUserInitiatedDisconnect = false
+                    isKillSwitchBlocking = false
                     val profileContent = intent.getStringExtra(EXTRA_PROFILE_CONTENT) ?: ""
                     val username = intent.getStringExtra(EXTRA_USERNAME)
                     val password = intent.getStringExtra(EXTRA_PASSWORD)
@@ -287,7 +289,6 @@ class ProxyVpnService : VpnService() {
                         val upstreamProxyUser = if (upstreamProxyEnabled) settings.upstreamProxyUsername.first() else ""
                         val upstreamProxyPass = if (upstreamProxyEnabled) settings.upstreamProxyPassword.first() else ""
                         val upstreamProxyCleartext = settings.upstreamProxyAllowCleartext.first()
-                        val deviceId = settings.getOrCreateDeviceId()
 
                         cachedTunnelMode = if (isTunMode) AppSettings.TUNNEL_MODE_TUN else AppSettings.TUNNEL_MODE_PROXY
                         cachedSecurityLevel = securityLevel
@@ -303,7 +304,6 @@ class ProxyVpnService : VpnService() {
                         cachedUpstreamProxyUsername = upstreamProxyUser
                         cachedUpstreamProxyPassword = upstreamProxyPass
                         cachedUpstreamProxyAllowCleartext = upstreamProxyCleartext
-                        cachedDeviceId = deviceId
 
                         Log.i(TAG, "Starting connection: isTunMode=$isTunMode secLevel=$securityLevel tls13=$enforceTls13 proto=$protoOverride timeout=$connTimeout ipv6=$ipv6Enabled bypassLanTun=$bypassLanTun")
 
@@ -336,8 +336,7 @@ class ProxyVpnService : VpnService() {
                                     upstreamProxyPort = upstreamProxyPort,
                                     upstreamProxyUser = upstreamProxyUser,
                                     upstreamProxyPass = upstreamProxyPass,
-                                    upstreamProxyAllowCleartext = upstreamProxyCleartext,
-                                    deviceId = deviceId
+                                    upstreamProxyAllowCleartext = upstreamProxyCleartext
                                 )
                             }
                         }
@@ -436,12 +435,14 @@ class ProxyVpnService : VpnService() {
                 val toExclude = mutableSetOf<String>()
                 toExclude.addAll(excludedRoutes)
                 if (cachedBypassLanTun) {
-                    toExclude.add("10.0.0.0/8")
-                    toExclude.add("172.16.0.0/12")
-                    toExclude.add("192.168.0.0/16")
-                    toExclude.add("169.254.0.0/16")
-                    toExclude.add("fc00::/7")
-                    toExclude.add("fe80::/10")
+                    val localSubnets = getActiveLocalSubnets()
+                    if (localSubnets.isNotEmpty()) {
+                        toExclude.addAll(localSubnets)
+                    } else {
+                        // Fallback: exclude link-local only to prevent leaking RFC1918 VPN routes (Claude N6)
+                        toExclude.add("169.254.0.0/16")
+                        toExclude.add("fe80::/10")
+                    }
                 }
                 for (ex in toExclude) {
                     try {
@@ -542,7 +543,38 @@ class ProxyVpnService : VpnService() {
         }
     }
 
+    private fun getActiveLocalSubnets(): List<String> {
+        val result = mutableListOf<String>()
+        try {
+            val cm = getSystemService(ConnectivityManager::class.java) ?: return result
+            val activeNetwork = cm.activeNetwork ?: return result
+            val linkProps = cm.getLinkProperties(activeNetwork) ?: return result
+            for (la in linkProps.linkAddresses) {
+                val addr = la.address
+                val prefix = la.prefixLength
+                if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                    val ipInt = java.nio.ByteBuffer.wrap(addr.address).int
+                    val mask = if (prefix == 0) 0 else (-1 shl (32 - prefix))
+                    val netInt = ipInt and mask
+                    val netAddr = java.net.InetAddress.getByAddress(
+                        java.nio.ByteBuffer.allocate(4).putInt(netInt).array()
+                    ).hostAddress
+                    if (netAddr != null) {
+                        result.add("$netAddr/$prefix")
+                    }
+                } else if (addr is java.net.Inet6Address && addr.isLinkLocalAddress) {
+                    result.add("fe80::/10")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed inspecting local subnets for LAN bypass", e)
+        }
+        return result
+    }
+
     fun disconnect() {
+        isUserInitiatedDisconnect = true
+        isKillSwitchBlocking = false
         val scope = ensureServiceScope()
         scope.launch(Dispatchers.IO) {
             try {
@@ -583,17 +615,9 @@ class ProxyVpnService : VpnService() {
             val rawBindAddr = settings.bindAddress.first()
             val allowLan = settings.allowLan.first()
 
-            // Defense-in-depth: If LAN binding (0.0.0.0) is requested without valid authentication credentials,
-            // refuse to bind to 0.0.0.0 and revert to local loopback 127.0.0.1
-            val effectiveBindAddr = if (allowLan && rawBindAddr == "0.0.0.0") {
-                if (rawAuthEnabled && authUser.isNotBlank() && authPass.isNotEmpty()) {
-                    "0.0.0.0"
-                } else {
-                    Log.w(TAG, "LAN access is enabled but proxy authentication is not configured. Forcing bind address to 127.0.0.1 for security.")
-                    "127.0.0.1"
-                }
-            } else {
-                rawBindAddr
+            val effectiveBindAddr = if (allowLan) "0.0.0.0" else rawBindAddr
+            if (effectiveBindAddr == "0.0.0.0" && (!rawAuthEnabled || authUser.isBlank() || authPass.isEmpty())) {
+                Log.w(TAG, "LAN access is enabled on 0.0.0.0 without proxy authentication. Any device on the local network can connect.")
             }
             val effectiveAuth = rawAuthEnabled
 
@@ -680,7 +704,6 @@ class ProxyVpnService : VpnService() {
                         val upstreamProxyUser = if (upstreamProxyEnabled) settings.upstreamProxyUsername.first() else ""
                         val upstreamProxyPass = if (upstreamProxyEnabled) settings.upstreamProxyPassword.first() else ""
                         val upstreamProxyCleartext = settings.upstreamProxyAllowCleartext.first()
-                        val deviceId = settings.getOrCreateDeviceId()
 
                         withContext(Dispatchers.IO) {
                             tunnelEngine.connect(
@@ -698,8 +721,7 @@ class ProxyVpnService : VpnService() {
                                 upstreamProxyPort = upstreamProxyPort,
                                 upstreamProxyUser = upstreamProxyUser,
                                 upstreamProxyPass = upstreamProxyPass,
-                                upstreamProxyAllowCleartext = upstreamProxyCleartext,
-                                deviceId = deviceId
+                                upstreamProxyAllowCleartext = upstreamProxyCleartext
                             )
                         }
                     }
@@ -832,6 +854,15 @@ class ProxyVpnService : VpnService() {
 
             // Manage interface teardown and notification on Disconnected or Error states
             if (state is TunnelState.Disconnected) {
+                if (isKillSwitchBlocking && !isUserInitiatedDisconnect) {
+                    // OpenVPN 3 core emits Disconnected after Error; keep kill-switch block intact (Claude N5)
+                    val errorNotification = createNotification(
+                        "VPN Lost — Traffic Blocked",
+                        "Kill-switch active. Tap Disconnect to restore network."
+                    )
+                    nm?.notify(NOTIFICATION_ID, errorNotification)
+                    return
+                }
                 try {
                     vpnInterface?.close()
                     vpnInterface = null
@@ -842,15 +873,18 @@ class ProxyVpnService : VpnService() {
                 } catch (_: Exception) {}
                 return
             } else if (state is TunnelState.Error) {
-                if (!cachedBlockTrafficOnDrop) {
+                val isTun = cachedTunnelMode == AppSettings.TUNNEL_MODE_TUN
+                if (isTun && cachedBlockTrafficOnDrop && vpnInterface != null && !isUserInitiatedDisconnect) {
+                    isKillSwitchBlocking = true
+                } else {
+                    isKillSwitchBlocking = false
                     try {
                         vpnInterface?.close()
                         vpnInterface = null
                     } catch (_: Exception) {}
                 }
-                val isTun = cachedTunnelMode == AppSettings.TUNNEL_MODE_TUN
-                val errorTitle = if (isTun && cachedBlockTrafficOnDrop) "VPN Lost — Traffic Blocked" else "Connection Error"
-                val errorSub = if (isTun && cachedBlockTrafficOnDrop) "Kill-switch active. Tap Disconnect to restore network." else state.message
+                val errorTitle = if (isKillSwitchBlocking) "VPN Lost — Traffic Blocked" else "Connection Error"
+                val errorSub = if (isKillSwitchBlocking) "Kill-switch active. Tap Disconnect to restore network." else state.message
                 val errorNotification = createNotification(errorTitle, errorSub)
                 nm?.notify(NOTIFICATION_ID, errorNotification)
                 return

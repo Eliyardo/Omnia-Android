@@ -2,6 +2,7 @@ package com.eliyardo.omnia.ui
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -9,6 +10,9 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,19 +56,11 @@ fun SettingsScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    // Intercept hardware and gesture back buttons to return to main screen
-    BackHandler(onBack = onBack)
-
     val scope = rememberCoroutineScope()
     var showSplitTunnelScreen by remember { mutableStateOf(false) }
 
-    if (showSplitTunnelScreen) {
-        SplitTunnelScreen(
-            viewModel = viewModel,
-            onBack = { showSplitTunnelScreen = false }
-        )
-        return
-    }
+    // Intercept hardware and gesture back buttons to return to main screen (only when not in child screens)
+    BackHandler(enabled = !showSplitTunnelScreen, onBack = onBack)
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -91,7 +87,7 @@ fun SettingsScreen(
 
     val vpnProtocolOverride by viewModel.settings.vpnProtocolOverride.collectAsState(initial = AppSettings.PROTO_ADAPTIVE)
     val connectionTimeout by viewModel.settings.connectionTimeout.collectAsState(initial = AppSettings.TIMEOUT_1M)
-    val securityLevel by viewModel.settings.securityLevel.collectAsState(initial = AppSettings.SECURITY_LEVEL_LEGACY)
+    val securityLevel by viewModel.settings.securityLevel.collectAsState(initial = AppSettings.SECURITY_LEVEL_PREFERRED)
     val enforceTls13 by viewModel.settings.enforceTls13.collectAsState(initial = false)
     val confirmOnDisconnect by viewModel.settings.confirmOnDisconnect.collectAsState(initial = false)
     val bypassLanTun by viewModel.settings.bypassLanTun.collectAsState(initial = true)
@@ -102,10 +98,6 @@ fun SettingsScreen(
     val upstreamProxyUsername by viewModel.settings.upstreamProxyUsername.collectAsState(initial = "")
     val upstreamProxyPassword by viewModel.settings.upstreamProxyPassword.collectAsState(initial = "")
     val upstreamProxyAllowCleartext by viewModel.settings.upstreamProxyAllowCleartext.collectAsState(initial = true)
-
-    val deviceId by viewModel.settings.deviceId.collectAsState(initial = "")
-
-    var showLanAuthDialog by remember { mutableStateOf(false) }
 
     var socks5PortText by remember(socks5Port) { mutableStateOf(socks5Port.toString()) }
     var httpPortText by remember(httpPort) { mutableStateOf(httpPort.toString()) }
@@ -120,7 +112,43 @@ fun SettingsScreen(
     var upstreamUserText by remember(upstreamProxyUsername) { mutableStateOf(upstreamProxyUsername) }
     var upstreamPassText by remember(upstreamProxyPassword) { mutableStateOf(upstreamProxyPassword) }
 
-    Scaffold(
+    AnimatedContent(
+        targetState = showSplitTunnelScreen,
+        transitionSpec = {
+            if (targetState) {
+                // Settings -> Split Tunnel: slide in from right with subtle fade, exit towards left
+                (slideInHorizontally(
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                    initialOffsetX = { fullWidth -> fullWidth }
+                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
+                    slideOutHorizontally(
+                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                        targetOffsetX = { fullWidth -> -fullWidth / 4 }
+                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
+                )
+            } else {
+                // Split Tunnel -> Settings: slide in from left with subtle fade, exit towards right
+                (slideInHorizontally(
+                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                    initialOffsetX = { fullWidth -> -fullWidth / 4 }
+                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
+                    slideOutHorizontally(
+                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                        targetOffsetX = { fullWidth -> fullWidth }
+                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
+                )
+            }
+        },
+        label = "SettingsToSplitTunnelTransition",
+        modifier = modifier.fillMaxSize()
+    ) { inSplitTunnel ->
+        if (inSplitTunnel) {
+            SplitTunnelScreen(
+                viewModel = viewModel,
+                onBack = { showSplitTunnelScreen = false }
+            )
+        } else {
+            Scaffold(
         topBar = {
             TopAppBar(
                 title = {
@@ -856,42 +884,38 @@ fun SettingsScreen(
                     Switch(
                         checked = allowLan,
                         onCheckedChange = { enabled ->
-                            if (enabled) {
-                                if (!proxyAuthEnabled || proxyUserText.isBlank() || proxyPassText.isBlank()) {
-                                    showLanAuthDialog = true
-                                } else {
-                                    scope.launch {
-                                        viewModel.settings.setAllowLan(true)
-                                        viewModel.settings.setBindAddress("0.0.0.0")
-                                    }
-                                }
-                            } else {
-                                scope.launch {
-                                    viewModel.settings.setAllowLan(false)
-                                    viewModel.settings.setBindAddress("127.0.0.1")
-                                }
+                            scope.launch {
+                                viewModel.settings.setAllowLan(enabled)
+                                viewModel.settings.setBindAddress(if (enabled) "0.0.0.0" else "127.0.0.1")
                             }
                         }
                     )
                 }
 
                 if (allowLan) {
+                    val isEffectiveLan = proxyAuthEnabled && proxyUserText.isNotBlank() && proxyPassText.isNotEmpty()
                     Card(
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isEffectiveLan) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer
+                        ),
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                Icons.Default.Shield,
+                                if (isEffectiveLan) Icons.Default.Shield else Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                tint = if (isEffectiveLan) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "LAN sharing active: Bound to 0.0.0.0 with mandatory proxy credentials authentication.",
+                                text = if (isEffectiveLan) {
+                                    "LAN sharing active: Bound to 0.0.0.0 with proxy authentication enabled."
+                                } else {
+                                    "Security Warning: Anyone on your local Wi-Fi can connect without credentials. Enabling Proxy Authentication above is recommended."
+                                },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = if (isEffectiveLan) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
                     }
@@ -1100,18 +1124,18 @@ fun SettingsScreen(
                 val secLevels = listOf(
                     Triple(
                         AppSettings.SECURITY_LEVEL_PREFERRED,
-                        "Preferred (High Security)",
-                        "Modern ciphers only (AES-GCM, ChaCha20). Rejects SHA-1 digests and weak ciphers."
+                        "Preferred (Default)",
+                        "Modern ciphers only (AES-GCM, ChaCha20-Poly1305). Enforces strong cryptography and strict verification."
                     ),
                     Triple(
                         AppSettings.SECURITY_LEVEL_LEGACY,
-                        "Legacy (Default)",
-                        "Recommended. Allows AES-CBC, BF-CBC, and SHA-1 digests for maximum server compatibility."
+                        "Legacy",
+                        "Allows AES-CBC, BF-CBC, and older cert profiles for compatibility with legacy OpenVPN servers."
                     ),
                     Triple(
                         AppSettings.SECURITY_LEVEL_INSECURE,
                         "Insecure",
-                        "Accepts older insecure TLS certificates and legacy cipher suites without strict validation."
+                        "Accepts deprecated TLS certificates and weak cipher suites. Not recommended."
                     )
                 )
 
@@ -1289,63 +1313,6 @@ fun SettingsScreen(
                         }
                     )
                 }
-
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                // 8. Device ID (Hardware UUID for MDM policies)
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Device Identifier (Hardware UUID)",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "Persistent client UUID passed to server for MDM device verification",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                if (deviceId.isNotBlank()) {
-                                    clipboardManager.setText(AnnotatedString(deviceId))
-                                    Toast.makeText(context, "Device ID copied to clipboard", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        ) {
-                            Icon(
-                                Icons.Default.ContentCopy,
-                                contentDescription = "Copy Device ID",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Text(
-                            text = deviceId.ifBlank { "Generating..." },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.padding(10.dp)
-                        )
-                    }
-                }
             }
 
             // ================= SECTION 7: ABOUT =================
@@ -1464,22 +1431,8 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
-
-    if (showLanAuthDialog) {
-        AlertDialog(
-            onDismissRequest = { showLanAuthDialog = false },
-            icon = { Icon(Icons.Default.Security, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-            title = { Text("Proxy Authentication Required") },
-            text = {
-                Text("Allowing LAN access exposes your proxy ports to other devices on the local Wi-Fi network. For security, you must set a proxy username and password in the Proxy Configuration section above before enabling LAN access.")
-            },
-            confirmButton = {
-                Button(onClick = { showLanAuthDialog = false }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
+}
+}
 }
 
 @Composable

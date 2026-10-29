@@ -61,7 +61,7 @@ class TunnelEngine {
         username: String? = null,
         password: String? = null,
         isTunMode: Boolean = false,
-        securityLevel: String = "legacy",
+        securityLevel: String = "preferred",
         enforceTls13: Boolean = false,
         protoOverride: String = "adaptive",
         connTimeout: Int = 60,
@@ -71,8 +71,7 @@ class TunnelEngine {
         upstreamProxyPort: Int = 0,
         upstreamProxyUser: String = "",
         upstreamProxyPass: String = "",
-        upstreamProxyAllowCleartext: Boolean = true,
-        deviceId: String = ""
+        upstreamProxyAllowCleartext: Boolean = true
     ): Boolean {
         if (nativeHandle == 0L) {
             Log.i(TAG, "Engine not initialized yet, initializing...")
@@ -99,8 +98,7 @@ class TunnelEngine {
                 upstreamProxyPort,
                 upstreamProxyUser,
                 upstreamProxyPass,
-                upstreamProxyAllowCleartext,
-                deviceId
+                upstreamProxyAllowCleartext
             ) == 0
         } catch (t: Throwable) {
             Log.e(TAG, "nativeConnect threw exception", t)
@@ -319,8 +317,7 @@ class TunnelEngine {
         upstreamProxyPort: Int,
         upstreamProxyUser: String,
         upstreamProxyPass: String,
-        upstreamProxyAllowCleartext: Boolean,
-        deviceId: String
+        upstreamProxyAllowCleartext: Boolean
     ): Int
     private external fun nativeDisconnect(handle: Long)
     private external fun nativeDestroy(handle: Long)
