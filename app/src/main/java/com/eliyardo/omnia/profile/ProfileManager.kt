@@ -28,6 +28,7 @@ class ProfileManager(private val context: Context) {
         private const val PROFILES_DIR = "profiles"
         private const val ACTIVE_PROFILE_FILE = "active_profile_id"
         private const val MAX_PROFILE_BYTES = 1024 * 1024 // 1 MB cap to prevent OOM
+        private val AUTH_USER_PASS_TAG_REGEX = "(?i)</?auth-user-pass>".toRegex()
 
         fun updateRawContent(
             original: String,
@@ -37,13 +38,13 @@ class ProfileManager(private val context: Context) {
             username: String?,
             password: String?
         ): String {
-            // Sanitize all inputs against CRLF and XML-style block directive injection
-            val safeHost = host.trim().replace("\r", "").replace("\n", "")
+            // Sanitize all inputs against CRLF, spaces/arguments, and XML-style block directive injection
+            val safeHost = host.trim().replace("\r", "").replace("\n", "").split(Regex("\\s+")).firstOrNull() ?: ""
             val safeProto = proto.trim().replace("\r", "").replace("\n", "").lowercase()
             val safeUsername = username?.trim()?.replace("\r", "")?.replace("\n", "")
-                ?.replace("(?i)</?auth-user-pass>".toRegex(), "")
+                ?.replace(AUTH_USER_PASS_TAG_REGEX, "")
             val safePassword = password?.replace("\r", "")?.replace("\n", "")
-                ?.replace("(?i)</?auth-user-pass>".toRegex(), "")
+                ?.replace(AUTH_USER_PASS_TAG_REGEX, "")
 
             val lines = original.lines()
             var remoteUpdated = false

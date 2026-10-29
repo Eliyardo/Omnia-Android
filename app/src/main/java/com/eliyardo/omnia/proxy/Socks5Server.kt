@@ -51,7 +51,7 @@ class Socks5Server(
         private const val BUFFER_SIZE = 32768
         private const val CONNECT_TIMEOUT_MS = 30000
         private const val PRE_AUTH_TIMEOUT_MS = 5000
-        private const val RELAY_IDLE_TIMEOUT_MS = 300_000 // 5-minute idle timeout to prevent thread exhaustion
+        private const val RELAY_IDLE_TIMEOUT_MS = 900_000 // 15-minute idle timeout to balance long-lived sessions and anti-DoS
         private const val MAX_CONCURRENT_CONNECTIONS = 64
         private const val CHANNEL_CAPACITY = 128
     }
@@ -59,6 +59,7 @@ class Socks5Server(
     private var serverSocket: ServerSocket? = null
     private val running = AtomicBoolean(false)
     private val activeConnections = AtomicInteger(0)
+    private val activeSockets = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
     private val proxyExecutor = java.util.concurrent.Executors.newFixedThreadPool(MAX_CONCURRENT_CONNECTIONS)
     private val proxyDispatcher = proxyExecutor.asCoroutineDispatcher()
     private val scope = CoroutineScope(proxyDispatcher + SupervisorJob())
@@ -95,8 +96,12 @@ class Socks5Server(
             Log.d(TAG, "Error closing server socket", e)
         }
         serverSocket = null
+        for (sock in activeSockets) {
+            try { sock.close() } catch (_: Exception) {}
+        }
+        activeSockets.clear()
         scope.cancel()
-        proxyExecutor.shutdown()
+        proxyExecutor.shutdownNow()
         Log.i(TAG, "SOCKS5 server stopped")
     }
     
@@ -113,6 +118,7 @@ class Socks5Server(
                     } catch (_: Exception) {}
                     continue
                 }
+                activeSockets.add(clientSocket)
                 activeConnections.incrementAndGet()
                 scope.launch {
                     try {
@@ -123,6 +129,7 @@ class Socks5Server(
                         }
                     } finally {
                         try { clientSocket.close() } catch (_: Exception) {}
+                        activeSockets.remove(clientSocket)
                         activeConnections.decrementAndGet()
                     }
                 }
@@ -279,6 +286,7 @@ class Socks5Server(
         
         val portHigh = input.read()
         val portLow = input.read()
+        if (portHigh < 0 || portLow < 0) return null
         val destPort = (portHigh shl 8) or portLow
         
         return Socks5Request(command, addressType, destAddress, destPort)

@@ -83,4 +83,32 @@ class ConnectionSessionHolderTest {
         assertEquals(10880, AppSettings.DEFAULT_SOCKS5_PORT)
         assertEquals(10890, AppSettings.DEFAULT_HTTP_PORT)
     }
+
+    @Test
+    fun testConcurrentConsumptionOnlyOneSucceeds() {
+        ConnectionSessionHolder.stageSession(
+            profileId = "prof-race",
+            username = "race-user",
+            password = "race-password"
+        )
+
+        val threadCount = 10
+        val results = java.util.concurrent.CopyOnWriteArrayList<ConnectionSessionHolder.Session?>()
+        val latch = java.util.concurrent.CountDownLatch(threadCount)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(threadCount)
+
+        for (i in 0 until threadCount) {
+            executor.submit {
+                val session = ConnectionSessionHolder.consumeSession("prof-race")
+                results.add(session)
+                latch.countDown()
+            }
+        }
+
+        latch.await(5, java.util.concurrent.TimeUnit.SECONDS)
+        executor.shutdown()
+
+        val nonNullCount = results.filterNotNull().size
+        assertEquals("Strictly only one thread may consume the session", 1, nonNullCount)
+    }
 }

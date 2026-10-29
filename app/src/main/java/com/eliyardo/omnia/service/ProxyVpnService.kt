@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicReference
  * 3. Residual credential retention in the Android system transaction record.
  */
 object ConnectionSessionHolder {
+    private const val SESSION_TTL_MS = 30_000L
+
     data class Session(
         val profileId: String,
         val profileContent: String? = null,
@@ -65,9 +67,14 @@ object ConnectionSessionHolder {
 
     fun consumeSession(expectedProfileId: String?): Session? {
         val current = sessionRef.get() ?: return null
-        if (expectedProfileId == null || current.profileId == expectedProfileId) {
+        if (System.currentTimeMillis() - current.timestamp > SESSION_TTL_MS) {
             sessionRef.compareAndSet(current, null)
-            return current
+            return null
+        }
+        if (expectedProfileId == null || current.profileId == expectedProfileId) {
+            if (sessionRef.compareAndSet(current, null)) {
+                return current
+            }
         }
         return null
     }
@@ -135,30 +142,30 @@ class ProxyVpnService : VpnService() {
     private val _proxyState = MutableStateFlow(ProxyState())
     val proxyState: StateFlow<ProxyState> = _proxyState.asStateFlow()
 
-    // Cached settings to prevent blocking calls on JNI/OpenVPN native threads
-    private var cachedTunnelMode: String = AppSettings.TUNNEL_MODE_TUN
-    private var cachedSecurityLevel: String = AppSettings.SECURITY_LEVEL_PREFERRED
-    private var cachedEnforceTls13: Boolean = false
-    private var cachedVpnProtocolOverride: String = AppSettings.PROTO_ADAPTIVE
-    private var cachedConnectionTimeout: Int = AppSettings.TIMEOUT_1M
-    private var cachedIpv6Enabled: Boolean = true
-    private var cachedAllowLan: Boolean = false
-    private var cachedBypassLanTun: Boolean = true
-    private var cachedBlockTrafficOnDrop: Boolean = true
-    private var cachedUpstreamProxyEnabled: Boolean = false
-    private var cachedUpstreamProxyHost: String = ""
-    private var cachedUpstreamProxyPort: Int = 8080
-    private var cachedUpstreamProxyUsername: String = ""
-    private var cachedUpstreamProxyPassword: String = ""
-    private var cachedUpstreamProxyAllowCleartext: Boolean = false
-    private var isUserInitiatedDisconnect: Boolean = false
-    private var isKillSwitchBlocking: Boolean = false
-    private var cachedDnsProvider: String = AppSettings.DNS_PROVIDER_SERVER
-    private var cachedCustomDnsPrimary: String = ""
-    private var cachedCustomDnsSecondary: String = ""
-    private var cachedSplitTunnelEnabled: Boolean = false
-    private var cachedSplitTunnelMode: String = AppSettings.SPLIT_TUNNEL_ALLOWLIST
-    private var cachedSplitTunnelApps: Set<String> = emptySet()
+    // Cached settings with @Volatile for safe cross-thread memory visibility
+    @Volatile private var cachedTunnelMode: String = AppSettings.TUNNEL_MODE_TUN
+    @Volatile private var cachedSecurityLevel: String = AppSettings.SECURITY_LEVEL_PREFERRED
+    @Volatile private var cachedEnforceTls13: Boolean = false
+    @Volatile private var cachedVpnProtocolOverride: String = AppSettings.PROTO_ADAPTIVE
+    @Volatile private var cachedConnectionTimeout: Int = AppSettings.TIMEOUT_1M
+    @Volatile private var cachedIpv6Enabled: Boolean = true
+    @Volatile private var cachedAllowLan: Boolean = false
+    @Volatile private var cachedBypassLanTun: Boolean = true
+    @Volatile private var cachedBlockTrafficOnDrop: Boolean = true
+    @Volatile private var cachedUpstreamProxyEnabled: Boolean = false
+    @Volatile private var cachedUpstreamProxyHost: String = ""
+    @Volatile private var cachedUpstreamProxyPort: Int = 8080
+    @Volatile private var cachedUpstreamProxyUsername: String = ""
+    @Volatile private var cachedUpstreamProxyPassword: String = ""
+    @Volatile private var cachedUpstreamProxyAllowCleartext: Boolean = false
+    @Volatile private var isUserInitiatedDisconnect: Boolean = false
+    @Volatile private var isKillSwitchBlocking: Boolean = false
+    @Volatile private var cachedDnsProvider: String = AppSettings.DNS_PROVIDER_SERVER
+    @Volatile private var cachedCustomDnsPrimary: String = ""
+    @Volatile private var cachedCustomDnsSecondary: String = ""
+    @Volatile private var cachedSplitTunnelEnabled: Boolean = false
+    @Volatile private var cachedSplitTunnelMode: String = AppSettings.SPLIT_TUNNEL_ALLOWLIST
+    @Volatile private var cachedSplitTunnelApps: Set<String> = emptySet()
 
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
     private var reconnectJob: Job? = null
@@ -430,7 +437,11 @@ class ProxyVpnService : VpnService() {
             saveCrashLog(t)
         }
 
-        return START_NOT_STICKY
+        return if (isKillSwitchBlocking || tunnelEngine.state.value is com.eliyardo.omnia.tunnel.TunnelState.Connected || tunnelEngine.state.value is com.eliyardo.omnia.tunnel.TunnelState.Connecting) {
+            START_STICKY
+        } else {
+            START_NOT_STICKY
+        }
     }
 
     private fun establishVpnInterface(
