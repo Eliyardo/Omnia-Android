@@ -32,7 +32,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val TAG = "MainViewModel"
     }
 
-    val profileManager = ProfileManager(application)
+    val profileManager = ProfileManager.getInstance(application)
     val settings = AppSettings(application)
 
     val tunnelMode: StateFlow<String> = settings.tunnelMode.stateIn(

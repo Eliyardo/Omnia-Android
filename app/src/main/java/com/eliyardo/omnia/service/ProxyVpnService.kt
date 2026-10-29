@@ -45,6 +45,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 object ConnectionSessionHolder {
     private const val SESSION_TTL_MS = 30_000L
+    private val cleanupScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     data class Session(
         val profileId: String,
@@ -62,7 +63,13 @@ object ConnectionSessionHolder {
         username: String? = null,
         password: String? = null
     ) {
-        sessionRef.set(Session(profileId, profileContent, username, password))
+        val session = Session(profileId, profileContent, username, password)
+        sessionRef.set(session)
+        // Automatic cleanup after TTL in case session is never consumed (e.g. process death or user abort)
+        cleanupScope.launch {
+            delay(SESSION_TTL_MS + 1000L)
+            sessionRef.compareAndSet(session, null)
+        }
     }
 
     fun consumeSession(expectedProfileId: String?): Session? {
@@ -132,7 +139,7 @@ class ProxyVpnService : VpnService() {
     private var serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     val tunnelEngine = TunnelEngine()
-    private val profileManager by lazy { ProfileManager(applicationContext) }
+    private val profileManager by lazy { ProfileManager.getInstance(applicationContext) }
     private var socks5Server: Socks5Server? = null
     private var httpProxyServer: HttpProxyServer? = null
     private val proxyLifecycleMutex = Mutex()
@@ -223,10 +230,12 @@ class ProxyVpnService : VpnService() {
                                 ok = true
                                 Log.i(TAG, "Bound socket $socket directly to active physical network $activeNet")
                             } finally {
-                                try {
-                                    pfd.detachFd() // Release ownership back to caller without closing the native socket
-                                    pfd.close()
-                                } catch (_: Exception) {}
+                                val detached = try { pfd.detachFd() } catch (_: Exception) { -1 }
+                                if (detached != -1 && detached != socket) {
+                                    // If fromFd created a duplicate descriptor, close the duplicate
+                                    try { ParcelFileDescriptor.adoptFd(detached).close() } catch (_: Exception) {}
+                                }
+                                try { pfd.close() } catch (_: Exception) {}
                             }
                         }
                     }
@@ -341,9 +350,6 @@ class ProxyVpnService : VpnService() {
                     val password = stagedSession?.password ?: @Suppress("DEPRECATION") intent.getStringExtra(EXTRA_PASSWORD)
 
                     var profileContent = stagedSession?.profileContent
-                    if (profileContent.isNullOrBlank() && !profileId.isNullOrBlank()) {
-                        profileContent = profileManager.getProfileContent(profileId)
-                    }
                     if (profileContent.isNullOrBlank()) {
                         @Suppress("DEPRECATION")
                         profileContent = intent.getStringExtra(EXTRA_PROFILE_CONTENT) ?: ""
@@ -360,6 +366,13 @@ class ProxyVpnService : VpnService() {
                     setupCallbacks()
 
                     scope.launch {
+                        if (profileContent.isNullOrBlank() && !profileId.isNullOrBlank()) {
+                            profileContent = withContext(Dispatchers.IO) {
+                                profileManager.getProfileContent(profileId)
+                            }
+                            lastProfileContent = profileContent
+                        }
+
                         applyDnsSettings()
 
                         val isTunMode = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
@@ -406,10 +419,11 @@ class ProxyVpnService : VpnService() {
                             stopProxyServers()
                         }
 
-                        if (profileContent.isNotEmpty()) {
+                        val contentToConnect = profileContent
+                        if (!contentToConnect.isNullOrEmpty()) {
                             withContext(Dispatchers.IO) {
                                 tunnelEngine.connect(
-                                    profileContent = profileContent,
+                                    profileContent = contentToConnect,
                                     username = username,
                                     password = password,
                                     isTunMode = isTunMode,
@@ -838,7 +852,9 @@ class ProxyVpnService : VpnService() {
         }
         serviceScope.launch {
             val autoReconnect = settings.autoReconnect.first()
-            val targetContent = lastProfileContent ?: lastProfileId?.let { profileManager.getProfileContent(it) }
+            val targetContent = lastProfileContent ?: lastProfileId?.let {
+                withContext(Dispatchers.IO) { profileManager.getProfileContent(it) }
+            }
             if (autoReconnect && targetContent != null) {
                 if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                     Log.w(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached. Aborting auto-reconnect.")

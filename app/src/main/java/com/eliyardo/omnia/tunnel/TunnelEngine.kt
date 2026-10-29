@@ -55,9 +55,14 @@ class TunnelEngine {
     
     @Synchronized
     fun initialize(): Boolean {
-        if (nativeHandle != 0L) return true
-        nativeHandle = nativeInit()
-        return nativeHandle != 0L
+        handleLock.writeLock().lock()
+        try {
+            if (nativeHandle != 0L) return true
+            nativeHandle = nativeInit()
+            return nativeHandle != 0L
+        } finally {
+            handleLock.writeLock().unlock()
+        }
     }
     
     @Synchronized
@@ -152,7 +157,7 @@ class TunnelEngine {
     }
     
     fun openConnection(host: String, port: Int, callback: TunnelConnectionCallback): Int {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) return -1
         try {
             if (nativeHandle == 0L) return -1
             val callbackId = callbackIdGenerator.incrementAndGet()
@@ -167,7 +172,7 @@ class TunnelEngine {
     }
     
     fun sendData(connId: Int, data: ByteArray, offset: Int = 0, length: Int = data.size): Int {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) return -1
         try {
             if (nativeHandle == 0L) return -1
             return nativeSendData(nativeHandle, connId, data, offset, length)
@@ -177,7 +182,10 @@ class TunnelEngine {
     }
     
     fun closeConnection(connId: Int) {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) {
+            connectionCallbacks.remove(connId)
+            return
+        }
         try {
             if (nativeHandle != 0L) {
                 nativeCloseConnection(nativeHandle, connId)
@@ -189,7 +197,7 @@ class TunnelEngine {
     }
 
     fun openUdpConnection(callback: TunnelUdpCallback): Int {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) return -1
         try {
             if (nativeHandle == 0L) return -1
             val callbackId = callbackIdGenerator.incrementAndGet()
@@ -204,7 +212,7 @@ class TunnelEngine {
     }
 
     fun sendUdpData(connId: Int, host: String, port: Int, data: ByteArray, offset: Int = 0, length: Int = data.size): Int {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) return -1
         try {
             if (nativeHandle == 0L) return -1
             return nativeSendUdpData(nativeHandle, connId, host, port, data, offset, length)
@@ -214,7 +222,10 @@ class TunnelEngine {
     }
 
     fun closeUdpConnection(connId: Int) {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) {
+            udpConnectionCallbacks.remove(connId)
+            return
+        }
         try {
             if (nativeHandle != 0L) {
                 nativeCloseUdpConnection(nativeHandle, connId)
@@ -226,7 +237,7 @@ class TunnelEngine {
     }
     
     fun resolveHostname(hostname: String): String? {
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) return null
         try {
             if (nativeHandle == 0L) return null
             return nativeResolveHostname(nativeHandle, hostname)
@@ -312,7 +323,7 @@ class TunnelEngine {
 
     fun acknowledgeData(connId: Int, length: Int) {
         if (length <= 0) return
-        handleLock.readLock().lock()
+        if (!handleLock.readLock().tryLock()) return
         try {
             if (nativeHandle != 0L) {
                 nativeAcknowledgeData(nativeHandle, connId, length)
@@ -361,8 +372,14 @@ class TunnelEngine {
     }
     
     fun setCustomDns(dns1: String?, dns2: String?) {
-        if (nativeHandle == 0L) return
-        nativeSetCustomDns(nativeHandle, dns1 ?: "", dns2 ?: "")
+        if (!handleLock.readLock().tryLock()) return
+        try {
+            if (nativeHandle != 0L) {
+                nativeSetCustomDns(nativeHandle, dns1 ?: "", dns2 ?: "")
+            }
+        } finally {
+            handleLock.readLock().unlock()
+        }
     }
 
     // --- Native methods ---

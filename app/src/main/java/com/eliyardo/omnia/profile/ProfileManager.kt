@@ -30,6 +30,15 @@ class ProfileManager(private val context: Context) {
         private const val MAX_PROFILE_BYTES = 1024 * 1024 // 1 MB cap to prevent OOM
         private val AUTH_USER_PASS_TAG_REGEX = "(?i)</?auth-user-pass>".toRegex()
 
+        @Volatile
+        private var instance: ProfileManager? = null
+
+        fun getInstance(context: Context): ProfileManager {
+            return instance ?: synchronized(this) {
+                instance ?: ProfileManager(context.applicationContext).also { instance = it }
+            }
+        }
+
         fun updateRawContent(
             original: String,
             host: String,
@@ -67,7 +76,12 @@ class ProfileManager(private val context: Context) {
                     continue
                 }
                 if (inAuthBlock) {
-                    continue // Skip old username/password lines
+                    // Prevent unclosed <auth-user-pass> tags from swallowing the entire rest of the file
+                    if (trimmed.startsWith("<") || trimmed.startsWith("remote ", ignoreCase = true) || trimmed.startsWith("proto ", ignoreCase = true)) {
+                        inAuthBlock = false
+                    } else {
+                        continue // Skip old username/password lines
+                    }
                 }
 
                 // Update only the primary remote directive; preserve subsequent remotes for failover
@@ -92,14 +106,15 @@ class ProfileManager(private val context: Context) {
                     continue
                 }
 
-                // Strip unsupported directives
                 val directive = lower.split("\\s+".toRegex())[0]
+
+                // Strip unsupported directives
                 if (directive in OvpnParser.UNSUPPORTED_DIRECTIVES) {
                     continue
                 }
 
-                // Handle standalone auth-user-pass (exact match or space-separated argument, preserving auth-user-pass-verify)
-                if (lower == "auth-user-pass" || lower.startsWith("auth-user-pass ")) {
+                // Handle standalone auth-user-pass (exact token match so other directives prefixed with auth-user-pass are preserved)
+                if (directive == "auth-user-pass") {
                     continue
                 }
 

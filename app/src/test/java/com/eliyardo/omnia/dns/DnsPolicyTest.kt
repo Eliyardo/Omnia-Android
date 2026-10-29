@@ -93,30 +93,14 @@ class DnsPolicyTest {
             write(byteArrayOf(0x01, 0xBB.toByte())) // Port 443
         }
 
-        val buf = ByteBuffer.wrap(stream.toByteArray())
-        assertEquals(0x05.toByte(), buf.get()) // VER
-        assertEquals(0x01.toByte(), buf.get()) // CMD
-        assertEquals(0x00.toByte(), buf.get()) // RSV
-        val atyp = buf.get()
-        assertEquals(0x03.toByte(), atyp)     // ATYP_DOMAIN
+        val engine = com.eliyardo.omnia.tunnel.TunnelEngine()
+        val server = com.eliyardo.omnia.proxy.Socks5Server(tunnelEngine = engine, remoteDns = true)
+        val req = server.readRequest(ByteArrayInputStream(stream.toByteArray()))
 
-        val dlen = buf.get().toInt() and 0xFF
-        val extractedBytes = ByteArray(dlen).also { buf.get(it) }
-        val extractedDomain = String(extractedBytes, Charsets.US_ASCII)
-        val port = buf.short.toInt() and 0xFFFF
-
-        // In Proxy Mode with remoteDns = true, the domain name MUST be forwarded to lwIP
-        // without calling InetAddress.getByName() on the Android host.
-        val remoteDns = true
-        val targetToTunnel = if (remoteDns && atyp == 0x03.toByte()) {
-            extractedDomain
-        } else {
-            "resolved-locally"
-        }
-
-        assertEquals("leak-test.dnsleaktest.com", targetToTunnel)
-        assertEquals(443, port)
-        assertFalse("Domain should not be resolved locally", targetToTunnel.contains("resolved-locally"))
+        assertNotNull("Request should be parsed by production Socks5Server", req)
+        assertEquals("leak-test.dnsleaktest.com", req!!.destAddress)
+        assertEquals(443, req.destPort)
+        assertEquals(0x03.toByte(), req.addressType)
     }
 
     @Test

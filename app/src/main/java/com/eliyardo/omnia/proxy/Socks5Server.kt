@@ -567,8 +567,11 @@ class Socks5Server(
                         }
 
                         val currentEndpoint = clientUdpEndpoint.get()
-                        if (currentEndpoint == null || currentEndpoint.port != packet.port || currentEndpoint.address != packet.address) {
-                            clientUdpEndpoint.set(InetSocketAddress(packet.address, packet.port))
+                        if (currentEndpoint == null) {
+                            clientUdpEndpoint.compareAndSet(null, InetSocketAddress(packet.address, packet.port))
+                        } else if (currentEndpoint.port != packet.port || currentEndpoint.address != packet.address) {
+                            Log.w(TAG, "Dropping UDP packet from unexpected endpoint: ${packet.address}:${packet.port} (expected $currentEndpoint)")
+                            continue
                         }
 
                         val len = packet.length

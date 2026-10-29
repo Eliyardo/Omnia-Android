@@ -30,7 +30,7 @@ class OmniaTileService : TileService() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private val profileManager by lazy { ProfileManager(applicationContext) }
+    private val profileManager by lazy { ProfileManager.getInstance(applicationContext) }
     private val settings by lazy { AppSettings(applicationContext) }
     private var proxyService: ProxyVpnService? = null
     private var isBound = false

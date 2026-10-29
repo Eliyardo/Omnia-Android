@@ -35,6 +35,14 @@ class SecurityPolicyTest {
         assertTrue(result.unsupportedDirectives.contains("plugin"))
         assertTrue(result.unsupportedDirectives.contains("script-security"))
         assertTrue(result.warnings.any { it.contains("unsupported and will be ignored") })
+
+        // Verify that executable directives are stripped from the rawContent passed to OpenVPN 3 Core
+        assertNotNull("Profile should be parsed", result.profile)
+        val raw = result.profile!!.rawContent
+        assertFalse("Executable directive 'up' must be stripped from rawContent", raw.contains("up "))
+        assertFalse("Executable directive 'down' must be stripped from rawContent", raw.contains("down "))
+        assertFalse("Executable directive 'plugin' must be stripped from rawContent", raw.contains("plugin "))
+        assertFalse("Executable directive 'script-security' must be stripped from rawContent", raw.contains("script-security"))
     }
 
     @Test
