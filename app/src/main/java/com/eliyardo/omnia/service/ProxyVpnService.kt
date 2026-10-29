@@ -150,7 +150,7 @@ class ProxyVpnService : VpnService() {
     private var cachedUpstreamProxyPort: Int = 8080
     private var cachedUpstreamProxyUsername: String = ""
     private var cachedUpstreamProxyPassword: String = ""
-    private var cachedUpstreamProxyAllowCleartext: Boolean = true
+    private var cachedUpstreamProxyAllowCleartext: Boolean = false
     private var isUserInitiatedDisconnect: Boolean = false
     private var isKillSwitchBlocking: Boolean = false
     private var cachedDnsProvider: String = AppSettings.DNS_PROVIDER_SERVER
@@ -629,8 +629,9 @@ class ProxyVpnService : VpnService() {
                 val addr = la.address
                 val prefix = la.prefixLength
                 if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                    if (prefix <= 0 || prefix > 32) continue
                     val ipInt = java.nio.ByteBuffer.wrap(addr.address).int
-                    val mask = if (prefix == 0) 0 else (-1 shl (32 - prefix))
+                    val mask = -1 shl (32 - prefix)
                     val netInt = ipInt and mask
                     val netAddr = java.net.InetAddress.getByAddress(
                         java.nio.ByteBuffer.allocate(4).putInt(netInt).array()

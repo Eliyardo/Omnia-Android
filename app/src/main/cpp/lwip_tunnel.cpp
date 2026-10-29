@@ -194,7 +194,7 @@ int LwipTunnel::connectTcp(int connId, const std::string& host, int port) {
     tcp_sent(pcb, tcpSentCb);
 
     /* Store PCB in the connection object */
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (conn) {
         conn->tcp_pcb = pcb;
     }
@@ -242,7 +242,7 @@ int LwipTunnel::connectTcp(int connId, const std::string& host, int port) {
 
 int LwipTunnel::sendTcpData(int connId, const uint8_t* data, int length) {
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (!conn || !conn->tcp_pcb || conn->closing.load()) return -1;
 
     struct tcp_pcb* pcb = static_cast<struct tcp_pcb*>(conn->tcp_pcb);
@@ -285,7 +285,7 @@ int LwipTunnel::sendTcpData(int connId, const uint8_t* data, int length) {
 
 void LwipTunnel::acknowledgeTcpData(int connId, int length) {
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (!conn || !conn->tcp_pcb || conn->closing.load()) return;
 
     struct tcp_pcb* pcb = static_cast<struct tcp_pcb*>(conn->tcp_pcb);
@@ -294,7 +294,7 @@ void LwipTunnel::acknowledgeTcpData(int connId, int length) {
 
 void LwipTunnel::closeTcp(int connId) {
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (!conn) return;
 
     struct tcp_pcb* pcb = static_cast<struct tcp_pcb*>(conn->tcp_pcb);
@@ -333,7 +333,7 @@ int LwipTunnel::openUdp(int connId) {
     intptr_t connIdPtr = connId;
     udp_recv(pcb, udpRecvCb, reinterpret_cast<void*>(connIdPtr));
 
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (conn) {
         conn->udp_pcb = pcb;
         conn->is_udp = true;
@@ -348,7 +348,7 @@ int LwipTunnel::sendUdpData(int connId, const std::string& host, int port, const
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
     if (!initialized || length < 0) return -1;
 
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (!conn || !conn->udp_pcb || conn->closing.load()) return -1;
 
     struct udp_pcb* pcb = static_cast<struct udp_pcb*>(conn->udp_pcb);
@@ -382,7 +382,7 @@ int LwipTunnel::sendUdpData(int connId, const std::string& host, int port, const
 
 void LwipTunnel::closeUdp(int connId) {
     std::lock_guard<std::recursive_mutex> lock(lwipMutex);
-    TunnelConnection* conn = engine->getConnection(connId);
+    auto conn = engine->getConnection(connId);
     if (!conn) return;
 
     struct udp_pcb* pcb = static_cast<struct udp_pcb*>(conn->udp_pcb);
@@ -590,7 +590,7 @@ void LwipTunnel::tcpErrCb(void* arg, err_t err) {
 
     if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {
         /* PCB is already freed by lwIP when error callback is called */
-        TunnelConnection* conn = g_activeLwipTunnel->engine->getConnection((int)connId);
+        auto conn = g_activeLwipTunnel->engine->getConnection((int)connId);
         if (conn) {
             conn->tcp_pcb = nullptr; /* PCB already freed */
         }
@@ -603,7 +603,7 @@ err_t LwipTunnel::tcpSentCb(void* arg, struct tcp_pcb* tpcb, u16_t len) {
 
     /* Try to flush buffered data */
     if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {
-        TunnelConnection* conn = g_activeLwipTunnel->engine->getConnection((int)connId);
+        auto conn = g_activeLwipTunnel->engine->getConnection((int)connId);
         if (conn) {
             std::lock_guard<std::mutex> lock(conn->sendMutex);
             if (!conn->sendBuffer.empty()) {
@@ -657,7 +657,7 @@ void LwipTunnel::dnsFoundCb(const char* name, const ip_addr_t* ipaddr, void* cal
     if (!ipaddr) {
         LOGE("DNS resolution failed for %s (connId=%d)", name ? name : "?", (int)connId);
         if (g_activeLwipTunnel->engine) {
-            TunnelConnection* conn = g_activeLwipTunnel->engine->getConnection((int)connId);
+            auto conn = g_activeLwipTunnel->engine->getConnection((int)connId);
             if (conn && conn->tcp_pcb) {
                 struct tcp_pcb* pcb = static_cast<struct tcp_pcb*>(conn->tcp_pcb);
                 conn->tcp_pcb = nullptr;
@@ -674,7 +674,7 @@ void LwipTunnel::dnsFoundCb(const char* name, const ip_addr_t* ipaddr, void* cal
 
     /* Complete the TCP connection */
     if (g_activeLwipTunnel && g_activeLwipTunnel->engine) {
-        TunnelConnection* conn = g_activeLwipTunnel->engine->getConnection((int)connId);
+        auto conn = g_activeLwipTunnel->engine->getConnection((int)connId);
         if (conn && conn->tcp_pcb) {
             struct tcp_pcb* pcb = static_cast<struct tcp_pcb*>(conn->tcp_pcb);
             err_t err = tcp_connect(pcb, ipaddr, (u16_t)conn->port, tcpConnectedCb);

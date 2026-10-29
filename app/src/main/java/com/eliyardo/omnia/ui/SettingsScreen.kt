@@ -106,7 +106,7 @@ fun SettingsScreen(
     val upstreamProxyPort by viewModel.settings.upstreamProxyPort.collectAsState(initial = 8080)
     val upstreamProxyUsername by viewModel.settings.upstreamProxyUsername.collectAsState(initial = "")
     val upstreamProxyPassword by viewModel.settings.upstreamProxyPassword.collectAsState(initial = "")
-    val upstreamProxyAllowCleartext by viewModel.settings.upstreamProxyAllowCleartext.collectAsState(initial = true)
+    val upstreamProxyAllowCleartext by viewModel.settings.upstreamProxyAllowCleartext.collectAsState(initial = false)
 
     var socks5PortText by remember(socks5Port) { mutableStateOf(socks5Port.toString()) }
     var httpPortText by remember(httpPort) { mutableStateOf(httpPort.toString()) }

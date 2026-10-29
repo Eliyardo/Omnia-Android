@@ -349,11 +349,11 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
         config.content = profile;
 
         // Security level & cryptographic cipher suite policy
-        if (securityLevel == "preferred") {
-            config.enableLegacyAlgorithms = false;
-            config.enableNonPreferredDCAlgorithms = false;
-            config.tlsCertProfileOverride = "preferred";
-            callbacks.log(3, "Security Level: Preferred (Modern AEAD ciphers enforced, compression disabled)");
+        if (securityLevel == "legacy") {
+            config.enableLegacyAlgorithms = true;
+            config.enableNonPreferredDCAlgorithms = true;
+            config.tlsCertProfileOverride = "legacy";
+            callbacks.log(3, "Security Level: Legacy (Standard compatibility: AES-CBC & TLS 1.2+ permitted)");
         } else if (securityLevel == "insecure") {
             config.enableLegacyAlgorithms = true;
             config.enableNonPreferredDCAlgorithms = true;
@@ -364,11 +364,11 @@ void TunnelEngine::runOpenVpn(const std::string& profile, const std::string& use
 #endif
             callbacks.log(2, "Security Level: Insecure (Permits legacy ciphers, weak digests, and insecure certificates)");
         } else {
-            // Default: "legacy"
-            config.enableLegacyAlgorithms = true;
-            config.enableNonPreferredDCAlgorithms = true;
-            config.tlsCertProfileOverride = "legacy";
-            callbacks.log(3, "Security Level: Legacy (Standard compatibility: AES-CBC & TLS 1.2+ permitted)");
+            // Default: "preferred" (fail-secure)
+            config.enableLegacyAlgorithms = false;
+            config.enableNonPreferredDCAlgorithms = false;
+            config.tlsCertProfileOverride = "preferred";
+            callbacks.log(3, "Security Level: Preferred (Modern AEAD ciphers enforced, compression disabled)");
         }
 
         // Enforce TLS 1.3
@@ -614,7 +614,7 @@ int TunnelEngine::openConnection(const std::string& host, int port, long callbac
 
     int connId = nextConnId.fetch_add(1);
 
-    auto conn = std::make_unique<TunnelConnection>();
+    auto conn = std::make_shared<TunnelConnection>();
     conn->id = connId;
     conn->host = host;
     conn->port = port;
@@ -622,7 +622,7 @@ int TunnelEngine::openConnection(const std::string& host, int port, long callbac
 
     {
         std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
-        connections[connId] = std::move(conn);
+        connections[connId] = conn;
     }
 
     LOGD("Opening connection %d to %s:%d", connId, host.c_str(), port);
@@ -641,7 +641,7 @@ int TunnelEngine::openConnection(const std::string& host, int port, long callbac
 int TunnelEngine::sendData(int connId, const uint8_t* data, int offset, int length) {
     if (!running.load() || !g_lwipTunnel) return -1;
 
-    TunnelConnection* conn = getConnection(connId);
+    auto conn = getConnection(connId);
     if (!conn || conn->closing.load()) return -1;
 
     int sent = g_lwipTunnel->sendTcpData(connId, data + offset, length);
@@ -657,11 +657,15 @@ void TunnelEngine::acknowledgeData(int connId, int length) {
 }
 
 void TunnelEngine::closeConnection(int connId) {
-    std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
-    auto it = connections.find(connId);
-    if (it == connections.end()) return;
+    std::shared_ptr<TunnelConnection> conn;
+    {
+        std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
+        auto it = connections.find(connId);
+        if (it == connections.end()) return;
+        conn = it->second;
+        connections.erase(it);
+    }
 
-    TunnelConnection* conn = it->second.get();
     if (!conn) return;
 
     if (conn->closing.exchange(true)) return; /* Already closing */
@@ -669,8 +673,6 @@ void TunnelEngine::closeConnection(int connId) {
     if (g_lwipTunnel) {
         g_lwipTunnel->closeTcp(connId);
     }
-
-    connections.erase(it);
 }
 
 int TunnelEngine::openUdpConnection(long callbackId) {
@@ -681,14 +683,14 @@ int TunnelEngine::openUdpConnection(long callbackId) {
 
     int connId = nextConnId.fetch_add(1);
 
-    auto conn = std::make_unique<TunnelConnection>();
+    auto conn = std::make_shared<TunnelConnection>();
     conn->id = connId;
     conn->is_udp = true;
     conn->callbackId = callbackId;
 
     {
         std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
-        connections[connId] = std::move(conn);
+        connections[connId] = conn;
     }
 
     int result = g_lwipTunnel->openUdp(connId);
@@ -705,7 +707,7 @@ int TunnelEngine::openUdpConnection(long callbackId) {
 int TunnelEngine::sendUdpData(int connId, const std::string& host, int port, const uint8_t* data, int offset, int length) {
     if (!running.load() || !g_lwipTunnel) return -1;
 
-    TunnelConnection* conn = getConnection(connId);
+    auto conn = getConnection(connId);
     if (!conn || conn->closing.load()) return -1;
 
     int sent = g_lwipTunnel->sendUdpData(connId, host, port, data + offset, length);
@@ -716,11 +718,15 @@ int TunnelEngine::sendUdpData(int connId, const std::string& host, int port, con
 }
 
 void TunnelEngine::closeUdpConnection(int connId) {
-    std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
-    auto it = connections.find(connId);
-    if (it == connections.end()) return;
+    std::shared_ptr<TunnelConnection> conn;
+    {
+        std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
+        auto it = connections.find(connId);
+        if (it == connections.end()) return;
+        conn = it->second;
+        connections.erase(it);
+    }
 
-    TunnelConnection* conn = it->second.get();
     if (!conn) return;
 
     if (conn->closing.exchange(true)) return;
@@ -728,8 +734,6 @@ void TunnelEngine::closeUdpConnection(int connId) {
     if (g_lwipTunnel) {
         g_lwipTunnel->closeUdp(connId);
     }
-
-    connections.erase(it);
 }
 
 std::string TunnelEngine::resolveHostname(const std::string& hostname) {
@@ -737,15 +741,15 @@ std::string TunnelEngine::resolveHostname(const std::string& hostname) {
     return g_lwipTunnel->resolveHost(hostname);
 }
 
-TunnelConnection* TunnelEngine::getConnection(int connId) {
+std::shared_ptr<TunnelConnection> TunnelEngine::getConnection(int connId) {
     std::lock_guard<std::recursive_mutex> lock(connectionsMutex);
     auto it = connections.find(connId);
-    if (it != connections.end()) return it->second.get();
+    if (it != connections.end()) return it->second;
     return nullptr;
 }
 
 void TunnelEngine::onLwipConnected(int connId) {
-    TunnelConnection* conn = getConnection(connId);
+    auto conn = getConnection(connId);
     if (conn) {
         conn->connected.store(true);
         callbacks.tunnelConnected(connId);

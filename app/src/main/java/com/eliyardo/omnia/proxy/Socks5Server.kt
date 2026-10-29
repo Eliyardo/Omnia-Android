@@ -51,6 +51,7 @@ class Socks5Server(
         private const val BUFFER_SIZE = 32768
         private const val CONNECT_TIMEOUT_MS = 30000
         private const val PRE_AUTH_TIMEOUT_MS = 5000
+        private const val RELAY_IDLE_TIMEOUT_MS = 300_000 // 5-minute idle timeout to prevent thread exhaustion
         private const val MAX_CONCURRENT_CONNECTIONS = 64
         private const val CHANNEL_CAPACITY = 128
     }
@@ -373,9 +374,9 @@ class Socks5Server(
             return
         }
         
-        // Send success reply and clear timeout for established tunnel session
+        // Send success reply and set relay idle timeout to prevent leaking connections
         sendReply(clientOutput, REPLY_SUCCESS)
-        clientSocket.soTimeout = 0
+        clientSocket.soTimeout = RELAY_IDLE_TIMEOUT_MS
         
         // Bidirectional relay
         try {

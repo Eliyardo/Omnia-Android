@@ -71,7 +71,7 @@ class TunnelEngine {
         upstreamProxyPort: Int = 0,
         upstreamProxyUser: String = "",
         upstreamProxyPass: String = "",
-        upstreamProxyAllowCleartext: Boolean = true
+        upstreamProxyAllowCleartext: Boolean = false
     ): Boolean {
         if (nativeHandle == 0L) {
             Log.i(TAG, "Engine not initialized yet, initializing...")

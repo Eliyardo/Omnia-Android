@@ -165,7 +165,7 @@ class AppSettings(private val context: Context) {
             com.eliyardo.omnia.security.KeystoreHelper.decrypt(raw)
         } else ""
     }
-    val upstreamProxyAllowCleartext: Flow<Boolean> = context.dataStore.data.map { it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] ?: true }
+    val upstreamProxyAllowCleartext: Flow<Boolean> = context.dataStore.data.map { it[UPSTREAM_PROXY_ALLOW_CLEARTEXT] ?: false }
 
     val splitTunnelEnabled: Flow<Boolean> = context.dataStore.data.map { it[SPLIT_TUNNEL_ENABLED] ?: false }
     val splitTunnelMode: Flow<String> = context.dataStore.data.map { it[SPLIT_TUNNEL_MODE] ?: SPLIT_TUNNEL_ALLOWLIST }

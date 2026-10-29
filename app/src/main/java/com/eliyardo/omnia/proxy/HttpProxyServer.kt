@@ -30,6 +30,7 @@ class HttpProxyServer(
         private const val BUFFER_SIZE = 32768
         private const val CONNECT_TIMEOUT_MS = 30000
         private const val PRE_AUTH_TIMEOUT_MS = 5000
+        private const val RELAY_IDLE_TIMEOUT_MS = 300_000 // 5-minute idle timeout to prevent thread exhaustion
         private const val MAX_HEADER_SIZE = 8192
         private const val MAX_CONCURRENT_CONNECTIONS = 64
         private const val CHANNEL_CAPACITY = 128
@@ -304,10 +305,10 @@ class HttpProxyServer(
             return
         }
         
-        // Send 200 Connection Established and clear timeout for active tunnel session
+        // Send 200 Connection Established and set relay idle timeout to prevent leaking connections
         clientOutput.write("HTTP/1.1 200 Connection Established\r\n\r\n".toByteArray())
         clientOutput.flush()
-        clientSocket.soTimeout = 0
+        clientSocket.soTimeout = RELAY_IDLE_TIMEOUT_MS
         
         // Bidirectional relay (same as SOCKS5)
         try {
@@ -459,8 +460,8 @@ class HttpProxyServer(
         
         tunnelEngine.sendData(connId, rewrittenRequest.toString().toByteArray())
         
-        // Clear socket timeout for active plain HTTP streaming session
-        clientSocket.soTimeout = 0
+        // Set relay idle timeout for active plain HTTP streaming session
+        clientSocket.soTimeout = RELAY_IDLE_TIMEOUT_MS
         
         // Relay response back
         try {

@@ -131,7 +131,7 @@ public:
     void onTunnelEstablished(const std::string& ip, int prefix, const std::string& gw,
                              const std::vector<std::string>& dns);
 
-    TunnelConnection* getConnection(int connId);
+    std::shared_ptr<TunnelConnection> getConnection(int connId);
 
     TunnelCallbacks callbacks;
 
@@ -140,7 +140,7 @@ private:
     std::atomic<int> nextConnId{1};
 
     std::recursive_mutex connectionsMutex;
-    std::unordered_map<int, std::unique_ptr<TunnelConnection>> connections;
+    std::unordered_map<int, std::shared_ptr<TunnelConnection>> connections;
 
     /* Transport thread for lwIP event loop */
     std::thread lwipThread;

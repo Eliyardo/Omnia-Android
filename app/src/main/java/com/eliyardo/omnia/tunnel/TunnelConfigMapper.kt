@@ -27,8 +27,9 @@ data class OpenVpnResolvedConfig(
         ): OpenVpnResolvedConfig {
             val (legacyAlgs, nonPrefDC, certProfile) = when (securityLevel) {
                 AppSettings.SECURITY_LEVEL_PREFERRED -> Triple(false, false, "preferred")
+                AppSettings.SECURITY_LEVEL_LEGACY -> Triple(true, true, "legacy")
                 AppSettings.SECURITY_LEVEL_INSECURE -> Triple(true, true, "insecure")
-                else -> Triple(true, true, "legacy")
+                else -> Triple(false, false, "preferred")
             }
 
             val tlsMin = if (enforceTls13) "tls_1_3" else ""

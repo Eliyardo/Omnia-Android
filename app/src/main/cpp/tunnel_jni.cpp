@@ -103,7 +103,7 @@ Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeSendData(
     if (!engine || !data || length <= 0) return -1;
 
     jsize arrayLen = env->GetArrayLength(data);
-    if (offset < 0 || length <= 0 || offset + length > arrayLen) return -1;
+    if (offset < 0 || length <= 0 || offset > arrayLen || length > arrayLen - offset) return -1;
 
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
     if (!bytes) return -1;
@@ -148,7 +148,7 @@ Java_com_eliyardo_omnia_tunnel_TunnelEngine_nativeSendUdpData(
     if (!engine || !data || length < 0) return -1;
 
     jsize arrayLen = env->GetArrayLength(data);
-    if (offset < 0 || length < 0 || offset + length > arrayLen) return -1;
+    if (offset < 0 || length < 0 || offset > arrayLen || length > arrayLen - offset) return -1;
 
     std::string h = jstringToString(env, host);
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
