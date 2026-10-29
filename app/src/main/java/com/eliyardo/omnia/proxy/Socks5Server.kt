@@ -1,6 +1,7 @@
 package com.eliyardo.omnia.proxy
 
 import android.util.Log
+import com.eliyardo.omnia.settings.AppSettings
 import com.eliyardo.omnia.tunnel.TunnelEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -19,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class Socks5Server(
     private val tunnelEngine: TunnelEngine,
     private val bindAddress: String = "127.0.0.1",
-    private val port: Int = 1080,
+    private val port: Int = AppSettings.DEFAULT_SOCKS5_PORT,
     private val authRequired: Boolean = false,
     private val authUsername: String = "",
     private val authPassword: String = "",

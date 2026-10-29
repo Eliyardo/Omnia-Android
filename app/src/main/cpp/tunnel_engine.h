@@ -94,7 +94,7 @@ public:
     bool initialize(JNIEnv* env, jobject engineObj);
     int connect(const std::string& profile, const std::string& username, const std::string& password,
                 bool isTunMode = false,
-                const std::string& securityLevel = "legacy",
+                const std::string& securityLevel = "preferred",
                 bool enforceTls13 = false,
                 const std::string& protoOverride = "adaptive",
                 int connTimeout = 60,

@@ -305,7 +305,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val context = getApplication<Application>()
-                val intent = ProxyVpnService.createConnectIntent(context, content, username, password)
+                val intent = ProxyVpnService.createConnectIntent(
+                    context = context,
+                    profileId = profile.id,
+                    profileContent = content,
+                    username = username,
+                    password = password
+                )
                 try {
                     context.startForegroundService(intent)
                 } catch (e: Throwable) {

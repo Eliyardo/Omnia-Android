@@ -19,6 +19,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.eliyardo.omnia.OmniaApp
 import com.eliyardo.omnia.R
+import com.eliyardo.omnia.profile.ProfileManager
 import com.eliyardo.omnia.proxy.HttpProxyServer
 import com.eliyardo.omnia.proxy.Socks5Server
 import com.eliyardo.omnia.settings.AppSettings
@@ -28,6 +29,53 @@ import com.eliyardo.omnia.tunnel.ProxyState
 import com.eliyardo.omnia.ui.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * In-memory staging mechanism to pass connection secrets (profile content, username, password)
+ * across local process boundaries without putting long-lived or large sensitive credentials into
+ * Android Intent extras.
+ *
+ * This prevents:
+ * 1. Intent logging by Android system server and dumpsys.
+ * 2. android.os.TransactionTooLargeException from Binder buffer exhaustion on large .ovpn profiles.
+ * 3. Residual credential retention in the Android system transaction record.
+ */
+object ConnectionSessionHolder {
+    data class Session(
+        val profileId: String,
+        val profileContent: String? = null,
+        val username: String? = null,
+        val password: String? = null,
+        val timestamp: Long = System.currentTimeMillis()
+    )
+
+    private val sessionRef = AtomicReference<Session?>(null)
+
+    fun stageSession(
+        profileId: String,
+        profileContent: String? = null,
+        username: String? = null,
+        password: String? = null
+    ) {
+        sessionRef.set(Session(profileId, profileContent, username, password))
+    }
+
+    fun consumeSession(expectedProfileId: String?): Session? {
+        val current = sessionRef.get() ?: return null
+        if (expectedProfileId == null || current.profileId == expectedProfileId) {
+            sessionRef.compareAndSet(current, null)
+            return current
+        }
+        return null
+    }
+
+    fun clear() {
+        sessionRef.set(null)
+    }
+}
 
 class ProxyVpnService : VpnService() {
 
@@ -37,21 +85,32 @@ class ProxyVpnService : VpnService() {
 
         const val ACTION_CONNECT = "com.eliyardo.omnia.action.CONNECT"
         const val ACTION_DISCONNECT = "com.eliyardo.omnia.action.DISCONNECT"
+        const val EXTRA_PROFILE_ID = "profile_id"
+
+        @Deprecated("Credentials and raw profile content are decoupled from Intent extras to prevent Binder size limit and logging issues")
         const val EXTRA_PROFILE_CONTENT = "profile_content"
+        @Deprecated("Credentials and raw profile content are decoupled from Intent extras to prevent Binder size limit and logging issues")
         const val EXTRA_USERNAME = "username"
+        @Deprecated("Credentials and raw profile content are decoupled from Intent extras to prevent Binder size limit and logging issues")
         const val EXTRA_PASSWORD = "password"
 
         fun createConnectIntent(
             context: Context,
-            profileContent: String,
+            profileId: String,
+            profileContent: String? = null,
             username: String? = null,
             password: String? = null
         ): Intent {
+            // Stage secrets in-memory so they never cross Binder/system boundaries
+            ConnectionSessionHolder.stageSession(
+                profileId = profileId,
+                profileContent = profileContent,
+                username = username,
+                password = password
+            )
             return Intent(context, ProxyVpnService::class.java).apply {
                 action = ACTION_CONNECT
-                putExtra(EXTRA_PROFILE_CONTENT, profileContent)
-                putExtra(EXTRA_USERNAME, username ?: "")
-                putExtra(EXTRA_PASSWORD, password ?: "")
+                putExtra(EXTRA_PROFILE_ID, profileId)
             }
         }
 
@@ -68,6 +127,8 @@ class ProxyVpnService : VpnService() {
     val tunnelEngine = TunnelEngine()
     private var socks5Server: Socks5Server? = null
     private var httpProxyServer: HttpProxyServer? = null
+    private val proxyLifecycleMutex = Mutex()
+    private var proxyStartJob: Job? = null
     lateinit var settings: AppSettings
     private var vpnInterface: ParcelFileDescriptor? = null
 
@@ -76,7 +137,7 @@ class ProxyVpnService : VpnService() {
 
     // Cached settings to prevent blocking calls on JNI/OpenVPN native threads
     private var cachedTunnelMode: String = AppSettings.TUNNEL_MODE_TUN
-    private var cachedSecurityLevel: String = AppSettings.SECURITY_LEVEL_LEGACY
+    private var cachedSecurityLevel: String = AppSettings.SECURITY_LEVEL_PREFERRED
     private var cachedEnforceTls13: Boolean = false
     private var cachedVpnProtocolOverride: String = AppSettings.PROTO_ADAPTIVE
     private var cachedConnectionTimeout: Int = AppSettings.TIMEOUT_1M
@@ -104,6 +165,7 @@ class ProxyVpnService : VpnService() {
     private var reconnectAttempts = 0
     private val MAX_RECONNECT_ATTEMPTS = 5
     private var listenersJob: Job? = null
+    private var lastProfileId: String? = null
     private var lastProfileContent: String? = null
     private var lastUsername: String? = null
     private var lastPassword: String? = null
@@ -259,10 +321,24 @@ class ProxyVpnService : VpnService() {
                 ACTION_CONNECT -> {
                     isUserInitiatedDisconnect = false
                     isKillSwitchBlocking = false
-                    val profileContent = intent.getStringExtra(EXTRA_PROFILE_CONTENT) ?: ""
-                    val username = intent.getStringExtra(EXTRA_USERNAME)
-                    val password = intent.getStringExtra(EXTRA_PASSWORD)
 
+                    val profileIdExtra = intent.getStringExtra(EXTRA_PROFILE_ID)
+                    val stagedSession = ConnectionSessionHolder.consumeSession(profileIdExtra)
+
+                    val profileId = stagedSession?.profileId ?: profileIdExtra
+                    val username = stagedSession?.username ?: @Suppress("DEPRECATION") intent.getStringExtra(EXTRA_USERNAME)
+                    val password = stagedSession?.password ?: @Suppress("DEPRECATION") intent.getStringExtra(EXTRA_PASSWORD)
+
+                    var profileContent = stagedSession?.profileContent
+                    if (profileContent.isNullOrBlank() && !profileId.isNullOrBlank()) {
+                        profileContent = ProfileManager(applicationContext).getProfileContent(profileId)
+                    }
+                    if (profileContent.isNullOrBlank()) {
+                        @Suppress("DEPRECATION")
+                        profileContent = intent.getStringExtra(EXTRA_PROFILE_CONTENT) ?: ""
+                    }
+
+                    lastProfileId = profileId
                     lastProfileContent = profileContent
                     lastUsername = username
                     lastPassword = password
@@ -580,8 +656,14 @@ class ProxyVpnService : VpnService() {
             try {
                 reconnectAttempts = 0
                 reconnectJob?.cancel()
+                lastProfileId = null
                 lastProfileContent = null
-                stopProxyServers()
+                lastUsername = null
+                lastPassword = null
+                ConnectionSessionHolder.clear()
+                proxyStartJob?.cancel()
+                proxyStartJob = null
+                stopProxyServersInternal()
                 tunnelEngine.disconnect()
                 try {
                     vpnInterface?.close()
@@ -605,65 +687,108 @@ class ProxyVpnService : VpnService() {
     }
 
     private fun startProxyServers() {
-        serviceScope.launch {
-            val socks5Port = settings.socks5Port.first()
-            val httpPort = settings.httpPort.first()
-            val rawAuthEnabled = settings.proxyAuthEnabled.first()
-            val authUser = settings.proxyUsername.first()
-            val authPass = settings.proxyPassword.first()
-            val remoteDns = settings.dnsMode.first() == AppSettings.DNS_MODE_REMOTE
-            val rawBindAddr = settings.bindAddress.first()
-            val allowLan = settings.allowLan.first()
+        proxyStartJob?.cancel()
+        proxyStartJob = serviceScope.launch(Dispatchers.IO) {
+            proxyLifecycleMutex.withLock {
+                if (!isActive || tunnelEngine.state.value !is TunnelState.Connected || cachedTunnelMode != AppSettings.TUNNEL_MODE_PROXY) {
+                    Log.d(TAG, "Skipping proxy start: inactive or not connected in proxy mode")
+                    return@withLock
+                }
 
-            val effectiveBindAddr = if (allowLan) "0.0.0.0" else rawBindAddr
-            if (effectiveBindAddr == "0.0.0.0" && (!rawAuthEnabled || authUser.isBlank() || authPass.isEmpty())) {
-                Log.w(TAG, "LAN access is enabled on 0.0.0.0 without proxy authentication. Any device on the local network can connect.")
+                try {
+                    socks5Server?.stop()
+                    httpProxyServer?.stop()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error stopping previous proxy server instance", e)
+                } finally {
+                    socks5Server = null
+                    httpProxyServer = null
+                }
+
+                val socks5Port = settings.socks5Port.first()
+                val httpPort = settings.httpPort.first()
+                val rawAuthEnabled = settings.proxyAuthEnabled.first()
+                val authUser = settings.proxyUsername.first()
+                val authPass = settings.proxyPassword.first()
+                val remoteDns = settings.dnsMode.first() == AppSettings.DNS_MODE_REMOTE
+                val rawBindAddr = settings.bindAddress.first()
+                val allowLan = settings.allowLan.first()
+
+                if (!isActive) return@withLock
+
+                val effectiveBindAddr = if (allowLan) "0.0.0.0" else rawBindAddr
+                if (effectiveBindAddr == "0.0.0.0" && (!rawAuthEnabled || authUser.isBlank() || authPass.isEmpty())) {
+                    Log.w(TAG, "LAN access is enabled on 0.0.0.0 without proxy authentication. Any device on the local network can connect.")
+                }
+                val effectiveAuth = rawAuthEnabled
+
+                val s5 = Socks5Server(
+                    tunnelEngine = tunnelEngine,
+                    bindAddress = effectiveBindAddr,
+                    port = socks5Port,
+                    authRequired = effectiveAuth,
+                    authUsername = authUser,
+                    authPassword = authPass,
+                    remoteDns = remoteDns
+                )
+
+                val http = HttpProxyServer(
+                    tunnelEngine = tunnelEngine,
+                    bindAddress = effectiveBindAddr,
+                    port = httpPort,
+                    authRequired = effectiveAuth,
+                    authUsername = authUser,
+                    authPassword = authPass,
+                    remoteDns = remoteDns
+                )
+
+                if (!isActive) return@withLock
+
+                val socks5Started = s5.start()
+                val httpStarted = http.start()
+
+                if (!isActive) {
+                    s5.stop()
+                    http.stop()
+                    return@withLock
+                }
+
+                socks5Server = s5
+                httpProxyServer = http
+
+                _proxyState.value = ProxyState(
+                    socks5Running = socks5Started,
+                    socks5Port = socks5Port,
+                    httpRunning = httpStarted,
+                    httpPort = httpPort
+                )
+
+                Log.i(TAG, "Proxy servers started: SOCKS5=$socks5Started HTTP=$httpStarted")
             }
-            val effectiveAuth = rawAuthEnabled
-
-            socks5Server?.stop()
-            httpProxyServer?.stop()
-
-            socks5Server = Socks5Server(
-                tunnelEngine = tunnelEngine,
-                bindAddress = effectiveBindAddr,
-                port = socks5Port,
-                authRequired = effectiveAuth,
-                authUsername = authUser,
-                authPassword = authPass,
-                remoteDns = remoteDns
-            )
-
-            httpProxyServer = HttpProxyServer(
-                tunnelEngine = tunnelEngine,
-                bindAddress = effectiveBindAddr,
-                port = httpPort,
-                authRequired = effectiveAuth,
-                authUsername = authUser,
-                authPassword = authPass,
-                remoteDns = remoteDns
-            )
-
-            val socks5Started = socks5Server!!.start()
-            val httpStarted = httpProxyServer!!.start()
-
-            _proxyState.value = ProxyState(
-                socks5Running = socks5Started,
-                socks5Port = socks5Port,
-                httpRunning = httpStarted,
-                httpPort = httpPort
-            )
-
-            Log.i(TAG, "Proxy servers started: SOCKS5=$socks5Started HTTP=$httpStarted")
         }
     }
 
     private fun stopProxyServers() {
-        socks5Server?.stop()
-        httpProxyServer?.stop()
-        socks5Server = null
-        httpProxyServer = null
-        _proxyState.value = ProxyState()
+        proxyStartJob?.cancel()
+        proxyStartJob = null
+        serviceScope.launch(Dispatchers.IO) {
+            stopProxyServersInternal()
+        }
+    }
+
+    private suspend fun stopProxyServersInternal() {
+        proxyLifecycleMutex.withLock {
+            try {
+                socks5Server?.stop()
+                httpProxyServer?.stop()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error stopping proxy servers", e)
+            } finally {
+                socks5Server = null
+                httpProxyServer = null
+                _proxyState.value = ProxyState()
+            }
+        }
     }
 
     private fun handleError(error: TunnelState.Error) {
@@ -673,7 +798,8 @@ class ProxyVpnService : VpnService() {
         }
         serviceScope.launch {
             val autoReconnect = settings.autoReconnect.first()
-            if (autoReconnect && lastProfileContent != null) {
+            val targetContent = lastProfileContent ?: lastProfileId?.let { ProfileManager(applicationContext).getProfileContent(it) }
+            if (autoReconnect && targetContent != null) {
                 if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                     Log.w(TAG, "Max reconnect attempts ($MAX_RECONNECT_ATTEMPTS) reached. Aborting auto-reconnect.")
                     val nm = getSystemService(NotificationManager::class.java)
@@ -689,41 +815,39 @@ class ProxyVpnService : VpnService() {
                 reconnectJob = serviceScope.launch {
                     delay(delayMs)
                     Log.i(TAG, "Executing auto-reconnect attempt $reconnectAttempts...")
-                    lastProfileContent?.let {
-                        applyDnsSettings()
-                        val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
-                        val securityLevel = settings.securityLevel.first()
-                        val enforceTls13 = settings.enforceTls13.first()
-                        val protoOverride = settings.vpnProtocolOverride.first()
-                        val connTimeout = settings.connectionTimeout.first()
-                        val ipv6Enabled = settings.ipv6Enabled.first()
-                        val bypassLanTun = settings.bypassLanTun.first()
-                        val upstreamProxyEnabled = settings.upstreamProxyEnabled.first()
-                        val upstreamProxyHost = if (upstreamProxyEnabled) settings.upstreamProxyHost.first() else ""
-                        val upstreamProxyPort = if (upstreamProxyEnabled) settings.upstreamProxyPort.first() else 0
-                        val upstreamProxyUser = if (upstreamProxyEnabled) settings.upstreamProxyUsername.first() else ""
-                        val upstreamProxyPass = if (upstreamProxyEnabled) settings.upstreamProxyPassword.first() else ""
-                        val upstreamProxyCleartext = settings.upstreamProxyAllowCleartext.first()
+                    applyDnsSettings()
+                    val isTun = settings.tunnelMode.first() == AppSettings.TUNNEL_MODE_TUN
+                    val securityLevel = settings.securityLevel.first()
+                    val enforceTls13 = settings.enforceTls13.first()
+                    val protoOverride = settings.vpnProtocolOverride.first()
+                    val connTimeout = settings.connectionTimeout.first()
+                    val ipv6Enabled = settings.ipv6Enabled.first()
+                    val bypassLanTun = settings.bypassLanTun.first()
+                    val upstreamProxyEnabled = settings.upstreamProxyEnabled.first()
+                    val upstreamProxyHost = if (upstreamProxyEnabled) settings.upstreamProxyHost.first() else ""
+                    val upstreamProxyPort = if (upstreamProxyEnabled) settings.upstreamProxyPort.first() else 0
+                    val upstreamProxyUser = if (upstreamProxyEnabled) settings.upstreamProxyUsername.first() else ""
+                    val upstreamProxyPass = if (upstreamProxyEnabled) settings.upstreamProxyPassword.first() else ""
+                    val upstreamProxyCleartext = settings.upstreamProxyAllowCleartext.first()
 
-                        withContext(Dispatchers.IO) {
-                            tunnelEngine.connect(
-                                profileContent = it,
-                                username = lastUsername,
-                                password = lastPassword,
-                                isTunMode = isTun,
-                                securityLevel = securityLevel,
-                                enforceTls13 = enforceTls13,
-                                protoOverride = protoOverride,
-                                connTimeout = connTimeout,
-                                ipv6Enabled = ipv6Enabled,
-                                bypassLanTun = bypassLanTun,
-                                upstreamProxyHost = upstreamProxyHost,
-                                upstreamProxyPort = upstreamProxyPort,
-                                upstreamProxyUser = upstreamProxyUser,
-                                upstreamProxyPass = upstreamProxyPass,
-                                upstreamProxyAllowCleartext = upstreamProxyCleartext
-                            )
-                        }
+                    withContext(Dispatchers.IO) {
+                        tunnelEngine.connect(
+                            profileContent = targetContent,
+                            username = lastUsername,
+                            password = lastPassword,
+                            isTunMode = isTun,
+                            securityLevel = securityLevel,
+                            enforceTls13 = enforceTls13,
+                            protoOverride = protoOverride,
+                            connTimeout = connTimeout,
+                            ipv6Enabled = ipv6Enabled,
+                            bypassLanTun = bypassLanTun,
+                            upstreamProxyHost = upstreamProxyHost,
+                            upstreamProxyPort = upstreamProxyPort,
+                            upstreamProxyUser = upstreamProxyUser,
+                            upstreamProxyPass = upstreamProxyPass,
+                            upstreamProxyAllowCleartext = upstreamProxyCleartext
+                        )
                     }
                 }
             }
@@ -920,7 +1044,20 @@ class ProxyVpnService : VpnService() {
         } catch (_: Exception) {}
         reconnectJob?.cancel()
         listenersJob?.cancel()
-        stopProxyServers()
+        proxyStartJob?.cancel()
+        proxyStartJob = null
+        try {
+            socks5Server?.stop()
+            httpProxyServer?.stop()
+        } catch (_: Exception) {}
+        socks5Server = null
+        httpProxyServer = null
+        _proxyState.value = ProxyState()
+        lastProfileId = null
+        lastProfileContent = null
+        lastUsername = null
+        lastPassword = null
+        ConnectionSessionHolder.clear()
         tunnelEngine.destroy()
         try {
             vpnInterface?.close()

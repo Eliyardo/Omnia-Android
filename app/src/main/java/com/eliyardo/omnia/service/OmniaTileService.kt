@@ -170,10 +170,11 @@ class OmniaTileService : TileService() {
             }
 
             val connectIntent = ProxyVpnService.createConnectIntent(
-                applicationContext,
-                content,
-                active.inlineUsername,
-                active.inlinePassword
+                context = applicationContext,
+                profileId = active.id,
+                profileContent = content,
+                username = active.inlineUsername,
+                password = active.inlinePassword
             )
 
             try {

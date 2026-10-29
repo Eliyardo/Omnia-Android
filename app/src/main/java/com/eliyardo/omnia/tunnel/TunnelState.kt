@@ -1,4 +1,6 @@
-﻿package com.eliyardo.omnia.tunnel
+package com.eliyardo.omnia.tunnel
+
+import com.eliyardo.omnia.settings.AppSettings
 
 sealed class TunnelState {
     data object Disconnected : TunnelState()
@@ -16,8 +18,8 @@ sealed class TunnelState {
 
 data class ProxyState(
     val socks5Running: Boolean = false,
-    val socks5Port: Int = 1080,
+    val socks5Port: Int = AppSettings.DEFAULT_SOCKS5_PORT,
     val httpRunning: Boolean = false,
-    val httpPort: Int = 8080,
+    val httpPort: Int = AppSettings.DEFAULT_HTTP_PORT,
     val activeConnections: Int = 0
 )
