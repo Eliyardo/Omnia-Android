@@ -163,14 +163,14 @@ cd Omnia-Android
 ```
 
 Release APKs are output to `app/build/outputs/apk/release/`:
-- `Omnia-1.1.3-arm64-v8a-release.apk`
-- `Omnia-1.1.3-armeabi-v7a-release.apk`
-- `Omnia-1.1.3-x86_64-release.apk`
-- `Omnia-1.1.3-universal-release.apk`
+- `Omnia-1.1.4-arm64-v8a-release.apk`
+- `Omnia-1.1.4-armeabi-v7a-release.apk`
+- `Omnia-1.1.4-x86_64-release.apk`
+- `Omnia-1.1.4-universal-release.apk`
 
 ---
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPLv3)**. See [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**. See [LICENSE](LICENSE) for details.
 Third-party component licenses are detailed in [DEPENDENCIES_AND_LICENSES.md](DEPENDENCIES_AND_LICENSES.md).

@@ -58,9 +58,18 @@ fun SettingsScreen(
 ) {
     val scope = rememberCoroutineScope()
     var showSplitTunnelScreen by remember { mutableStateOf(false) }
+    var showLicensesDialog by remember { mutableStateOf(false) }
 
-    // Intercept hardware and gesture back buttons to return to main screen (only when not in child screens)
-    BackHandler(enabled = !showSplitTunnelScreen, onBack = onBack)
+    if (showSplitTunnelScreen) {
+        SplitTunnelScreen(
+            viewModel = viewModel,
+            onBack = { showSplitTunnelScreen = false }
+        )
+        return
+    }
+
+    // Intercept hardware and gesture back buttons to return to main screen
+    BackHandler(onBack = onBack)
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -112,43 +121,8 @@ fun SettingsScreen(
     var upstreamUserText by remember(upstreamProxyUsername) { mutableStateOf(upstreamProxyUsername) }
     var upstreamPassText by remember(upstreamProxyPassword) { mutableStateOf(upstreamProxyPassword) }
 
-    AnimatedContent(
-        targetState = showSplitTunnelScreen,
-        transitionSpec = {
-            if (targetState) {
-                // Settings -> Split Tunnel: slide in from right with subtle fade, exit towards left
-                (slideInHorizontally(
-                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-                    initialOffsetX = { fullWidth -> fullWidth }
-                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
-                    slideOutHorizontally(
-                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-                        targetOffsetX = { fullWidth -> -fullWidth / 4 }
-                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
-                )
-            } else {
-                // Split Tunnel -> Settings: slide in from left with subtle fade, exit towards right
-                (slideInHorizontally(
-                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-                    initialOffsetX = { fullWidth -> -fullWidth / 4 }
-                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
-                    slideOutHorizontally(
-                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-                        targetOffsetX = { fullWidth -> fullWidth }
-                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
-                )
-            }
-        },
-        label = "SettingsToSplitTunnelTransition",
-        modifier = modifier.fillMaxSize()
-    ) { inSplitTunnel ->
-        if (inSplitTunnel) {
-            SplitTunnelScreen(
-                viewModel = viewModel,
-                onBack = { showSplitTunnelScreen = false }
-            )
-        } else {
-            Scaffold(
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
@@ -1380,6 +1354,10 @@ fun SettingsScreen(
                             label = "SOCKS5 Protocol",
                             value = "RFC 1928 compliant (TCP CONNECT & UDP ASSOCIATE)"
                         )
+                        AboutDetailRow(
+                            label = "License",
+                            value = "GNU AGPLv3 (Free & Open Source)"
+                        )
                     }
 
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -1425,14 +1403,60 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    // Open Source Licenses row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showLicensesDialog = true }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Shield,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Open Source Licenses",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "GNU AGPLv3",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
-}
-}
+
+    if (showLicensesDialog) {
+        LicensesDialog(onDismiss = { showLicensesDialog = false })
+    }
 }
 
 @Composable
@@ -1549,5 +1573,103 @@ private fun AboutDetailRow(label: String, value: String) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun LicensesDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Shield,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+        },
+        title = {
+            Text(
+                text = "Open Source Licenses",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Omnia is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). It incorporates the following open-source software libraries:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                LicenseItem(
+                    name = "Omnia Client",
+                    license = "GNU Affero General Public License v3.0 (AGPL-3.0)",
+                    copyright = "Copyright © 2024 Eliyardo & Omnia Contributors"
+                )
+                LicenseItem(
+                    name = "OpenVPN 3 Core Library",
+                    license = "AGPL-3.0 / MPL-2.0 (with OpenSSL Exception)",
+                    copyright = "Copyright © 2012-2024 OpenVPN Inc."
+                )
+                LicenseItem(
+                    name = "lwIP (Lightweight IP)",
+                    license = "BSD-3-Clause",
+                    copyright = "Copyright © 2001-2004 Swedish Institute of Computer Science"
+                )
+                LicenseItem(
+                    name = "OpenSSL (KDAB Android Port)",
+                    license = "Apache-2.0",
+                    copyright = "Copyright © 1998-2023 The OpenSSL Project Authors\nCopyright © 2013-2023 KDAB"
+                )
+                LicenseItem(
+                    name = "Asio C++ Library",
+                    license = "Boost Software License 1.0 (BSL-1.0)",
+                    copyright = "Copyright © 2003-2023 Christopher M. Kohlhoff"
+                )
+                LicenseItem(
+                    name = "{fmt} Formatting Library",
+                    license = "MIT License",
+                    copyright = "Copyright © 2012-present Victor Zverovich and {fmt} contributors"
+                )
+                LicenseItem(
+                    name = "LZ4 Compression Library",
+                    license = "BSD-2-Clause",
+                    copyright = "Copyright © 2011-2020 Yann Collet"
+                )
+                LicenseItem(
+                    name = "AndroidX & Jetpack Compose",
+                    license = "Apache-2.0",
+                    copyright = "Copyright © 2005-2024 The Android Open Source Project"
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+        shape = RoundedCornerShape(16.dp)
+    )
+}
+
+@Composable
+private fun LicenseItem(name: String, license: String, copyright: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(text = name, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(text = license, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Text(text = copyright, style = MaterialTheme.typography.bodySmall, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

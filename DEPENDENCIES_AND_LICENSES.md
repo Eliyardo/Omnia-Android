@@ -18,7 +18,8 @@ This document lists all direct and transitive third-party libraries, native comp
 
 ### License Compliance Notes
 
-- **OpenVPN 3 Core**: Dual-licensed under the GNU Affero General Public License Version 3 (AGPLv3) and the Mozilla Public License Version 2.0 (MPL-2.0). Omnia exercises the open-source licensing path with full source code distribution.
+- **Omnia**: Distributed under the **GNU Affero General Public License Version 3 (AGPLv3)**.
+- **OpenVPN 3 Core**: Dual-licensed under the GNU Affero General Public License Version 3 (AGPLv3) and the Mozilla Public License Version 2.0 (MPL-2.0). Omnia exercises the open-source licensing path with full source code distribution, directly matching OpenVPN 3 Core's native AGPLv3 copyleft terms.
 - **lwIP**: Licensed under the permissive BSD-3-Clause license. Copyright (c) 2001-2004 Swedish Institute of Computer Science.
 - **Asio**: Distributed under the Boost Software License, Version 1.0. Copyright (c) 2003-2023 Christopher M. Kohlhoff.
 - **{fmt}**: Distributed under the MIT license. Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors.

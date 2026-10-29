@@ -267,39 +267,51 @@ fun MainScreen(viewModel: MainViewModel) {
         targetState = showSettings,
         transitionSpec = {
             if (targetState) {
-                // Main -> Settings: slide in from right with subtle fade, exit towards left
-                (slideInHorizontally(
-                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                // Main -> Settings: Settings slides in on top from right (zIndex 1f)
+                slideInHorizontally(
+                    animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
                     initialOffsetX = { fullWidth -> fullWidth }
-                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
+                ).togetherWith(
                     slideOutHorizontally(
-                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
                         targetOffsetX = { fullWidth -> -fullWidth / 4 }
-                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
-                )
+                    )
+                ).apply {
+                    targetContentZIndex = 1f
+                }
             } else {
-                // Settings -> Main: slide in from left with subtle fade, exit towards right
-                (slideInHorizontally(
-                    animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                // Settings -> Main: Settings slides out to right on top, revealing Main
+                slideInHorizontally(
+                    animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
                     initialOffsetX = { fullWidth -> -fullWidth / 4 }
-                ) + fadeIn(animationSpec = tween(durationMillis = 300))).togetherWith(
+                ).togetherWith(
                     slideOutHorizontally(
-                        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
                         targetOffsetX = { fullWidth -> fullWidth }
-                    ) + fadeOut(animationSpec = tween(durationMillis = 200))
-                )
+                    )
+                ).apply {
+                    targetContentZIndex = 0f
+                }
             }
         },
         label = "MainSettingsTransition",
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
     ) { inSettings ->
         if (inSettings) {
             SettingsScreen(
                 viewModel = viewModel,
-                onBack = { showSettings = false }
+                onBack = { showSettings = false },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
             )
         } else {
             Scaffold(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 containerColor = MaterialTheme.colorScheme.background,
         topBar = {
