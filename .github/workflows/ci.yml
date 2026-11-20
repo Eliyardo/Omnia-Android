@@ -30,5 +30,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Verify Prebuilt OpenSSL Binaries Checksums
+        run: sha256sum -c app/src/main/cpp/OPENSSL_CHECKSUMS.sha256
+
       - name: Build Native Code, Verify R8, and Run Tests
-        run: ./gradlew test assembleRelease
+        run: ./gradlew test lintDebug assembleRelease

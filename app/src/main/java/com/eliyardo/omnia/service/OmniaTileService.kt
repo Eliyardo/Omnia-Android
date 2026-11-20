@@ -1,5 +1,6 @@
 package com.eliyardo.omnia.service
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
@@ -111,16 +112,7 @@ class OmniaTileService : TileService() {
                 val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    val pending = PendingIntent.getActivity(
-                        applicationContext, 0, launchIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    startActivityAndCollapse(pending)
-                } else {
-                    @Suppress("DEPRECATION")
-                    startActivityAndCollapse(launchIntent)
-                }
+                launchActivityAndCollapseTile(launchIntent)
                 Toast.makeText(applicationContext, "Please select an Omnia profile first", Toast.LENGTH_SHORT).show()
                 return@launch
             }
@@ -129,16 +121,7 @@ class OmniaTileService : TileService() {
                 val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    val pending = PendingIntent.getActivity(
-                        applicationContext, 0, launchIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
-                    startActivityAndCollapse(pending)
-                } else {
-                    @Suppress("DEPRECATION")
-                    startActivityAndCollapse(launchIntent)
-                }
+                launchActivityAndCollapseTile(launchIntent)
                 Toast.makeText(applicationContext, "Credentials required. Please connect via app.", Toast.LENGTH_SHORT).show()
                 return@launch
             }
@@ -150,16 +133,7 @@ class OmniaTileService : TileService() {
                     val launchIntent = Intent(applicationContext, MainActivity::class.java).apply {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                     }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                        val pending = PendingIntent.getActivity(
-                            applicationContext, 0, launchIntent,
-                            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                        )
-                        startActivityAndCollapse(pending)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        startActivityAndCollapse(launchIntent)
-                    }
+                    launchActivityAndCollapseTile(launchIntent)
                     return@launch
                 }
             }
@@ -218,6 +192,20 @@ class OmniaTileService : TileService() {
         }
 
         tile.updateTile()
+    }
+
+    @SuppressLint("StartActivityAndCollapseDeprecated")
+    private fun launchActivityAndCollapseTile(intent: Intent) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val pending = PendingIntent.getActivity(
+                applicationContext, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            startActivityAndCollapse(pending)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(intent)
+        }
     }
 
     override fun onDestroy() {

@@ -58,16 +58,14 @@ android {
             )
             ksFile.inputStream().use { ks.load(it, releaseStorePassword!!.toCharArray()) }
             val aliases = ks.aliases().toList()
-            println("=== Available Keystore Aliases: $aliases ===")
             if (releaseKeyAlias.isNullOrBlank() || !ks.containsAlias(releaseKeyAlias)) {
                 val matching = aliases.firstOrNull { a -> ks.isKeyEntry(a) } ?: aliases.firstOrNull()
                 if (matching != null) {
-                    println("=== Auto-resolved Key Alias to: '$matching' (provided was '$releaseKeyAlias') ===")
                     releaseKeyAlias = matching
                 }
             }
-        } catch (e: Exception) {
-            println("=== Warning inspecting keystore: ${e.message} ===")
+        } catch (_: Exception) {
+            // Silently fall back if keystore cannot be inspected
         }
     }
 
@@ -137,6 +135,10 @@ android {
     }
 
     ndkVersion = "27.2.12479018"
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -151,7 +153,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")

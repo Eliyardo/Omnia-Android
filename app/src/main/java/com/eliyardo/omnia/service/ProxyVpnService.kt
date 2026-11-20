@@ -33,64 +33,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * In-memory staging mechanism to pass connection secrets (profile content, username, password)
- * across local process boundaries without putting long-lived or large sensitive credentials into
- * Android Intent extras.
- *
- * This prevents:
- * 1. Intent logging by Android system server and dumpsys.
- * 2. android.os.TransactionTooLargeException from Binder buffer exhaustion on large .ovpn profiles.
- * 3. Residual credential retention in the Android system transaction record.
- */
-object ConnectionSessionHolder {
-    private const val SESSION_TTL_MS = 30_000L
-    private val cleanupScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-
-    data class Session(
-        val profileId: String,
-        val profileContent: String? = null,
-        val username: String? = null,
-        val password: String? = null,
-        val timestamp: Long = System.currentTimeMillis()
-    )
-
-    private val sessionRef = AtomicReference<Session?>(null)
-
-    fun stageSession(
-        profileId: String,
-        profileContent: String? = null,
-        username: String? = null,
-        password: String? = null
-    ) {
-        val session = Session(profileId, profileContent, username, password)
-        sessionRef.set(session)
-        // Automatic cleanup after TTL in case session is never consumed (e.g. process death or user abort)
-        cleanupScope.launch {
-            delay(SESSION_TTL_MS + 1000L)
-            sessionRef.compareAndSet(session, null)
-        }
-    }
-
-    fun consumeSession(expectedProfileId: String?): Session? {
-        val current = sessionRef.get() ?: return null
-        if (System.currentTimeMillis() - current.timestamp > SESSION_TTL_MS) {
-            sessionRef.compareAndSet(current, null)
-            return null
-        }
-        if (expectedProfileId == null || current.profileId == expectedProfileId) {
-            if (sessionRef.compareAndSet(current, null)) {
-                return current
-            }
-        }
-        return null
-    }
-
-    fun clear() {
-        sessionRef.set(null)
-    }
-}
-
 class ProxyVpnService : VpnService() {
 
     companion object {
@@ -672,35 +614,7 @@ class ProxyVpnService : VpnService() {
         }
     }
 
-    private fun getActiveLocalSubnets(): List<String> {
-        val result = mutableListOf<String>()
-        try {
-            val cm = getSystemService(ConnectivityManager::class.java) ?: return result
-            val activeNetwork = cm.activeNetwork ?: return result
-            val linkProps = cm.getLinkProperties(activeNetwork) ?: return result
-            for (la in linkProps.linkAddresses) {
-                val addr = la.address
-                val prefix = la.prefixLength
-                if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                    if (prefix <= 0 || prefix > 32) continue
-                    val ipInt = java.nio.ByteBuffer.wrap(addr.address).int
-                    val mask = -1 shl (32 - prefix)
-                    val netInt = ipInt and mask
-                    val netAddr = java.net.InetAddress.getByAddress(
-                        java.nio.ByteBuffer.allocate(4).putInt(netInt).array()
-                    ).hostAddress
-                    if (netAddr != null) {
-                        result.add("$netAddr/$prefix")
-                    }
-                } else if (addr is java.net.Inet6Address && addr.isLinkLocalAddress) {
-                    result.add("fe80::/10")
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed inspecting local subnets for LAN bypass", e)
-        }
-        return result
-    }
+    private fun getActiveLocalSubnets(): List<String> = VpnNetworkUtils.getActiveLocalSubnets(this)
 
     fun disconnect() {
         isUserInitiatedDisconnect = true
@@ -977,56 +891,10 @@ class ProxyVpnService : VpnService() {
         }
     }
 
-    private fun formatSpeed(bytesPerSec: Long): String {
-        return when {
-            bytesPerSec >= 1024L * 1024L -> String.format(java.util.Locale.US, "%.1f MB/s", bytesPerSec / (1024f * 1024f))
-            bytesPerSec >= 1024L -> String.format(java.util.Locale.US, "%.1f KB/s", bytesPerSec / 1024f)
-            else -> "$bytesPerSec B/s"
-        }
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1024L * 1024L * 1024L -> String.format(java.util.Locale.US, "%.2f GB", bytes / (1024f * 1024f * 1024f))
-            bytes >= 1024L * 1024L -> String.format(java.util.Locale.US, "%.1f MB", bytes / (1024f * 1024f))
-            bytes >= 1024L -> String.format(java.util.Locale.US, "%.1f KB", bytes / 1024f)
-            else -> "$bytes B"
-        }
-    }
-
-    private fun createNotification(status: String, subText: String? = null): Notification {
-        val launchIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val disconnectIntent = Intent(this, ProxyVpnService::class.java).apply {
-            action = ACTION_DISCONNECT
-        }
-        val disconnectPendingIntent = PendingIntent.getService(
-            this, 1, disconnectIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val builder = NotificationCompat.Builder(this, OmniaApp.NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Omnia")
-            .setContentText(status)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(R.drawable.ic_notification, "Disconnect", disconnectPendingIntent)
-
-        if (!subText.isNullOrBlank()) {
-            builder.setSubText(subText)
-        }
-
-        return builder.build()
-    }
+    private fun formatSpeed(bytesPerSec: Long): String = VpnNotificationHelper.formatSpeed(bytesPerSec)
+    private fun formatBytes(bytes: Long): String = VpnNotificationHelper.formatBytes(bytes)
+    private fun createNotification(status: String, subText: String? = null): Notification =
+        VpnNotificationHelper.createNotification(this, status, subText)
 
     private fun updateNotification(state: TunnelState, stats: TunnelEngine.TrafficStats = tunnelEngine.stats.value) {
         try {

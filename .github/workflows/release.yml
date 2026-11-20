@@ -39,6 +39,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Verify Prebuilt OpenSSL Binaries Checksums
+        run: sha256sum -c app/src/main/cpp/OPENSSL_CHECKSUMS.sha256
+
       - name: Determine Version and Tag
         id: versioning
         env:

@@ -283,7 +283,15 @@ class OvpnParser {
                 .replace(endTag, "")
                 .replace("\\s+".toRegex(), "")
             if (clean.isEmpty()) return null
-            val bytes = android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+            val bytes = (try {
+                android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+            } catch (_: Throwable) {
+                null
+            }) ?: try {
+                java.util.Base64.getDecoder().decode(clean)
+            } catch (_: Throwable) {
+                return null
+            }
             val md = java.security.MessageDigest.getInstance("SHA-256")
             val digest = md.digest(bytes)
             digest.joinToString(":") { "%02X".format(it) }

@@ -182,11 +182,11 @@ class HttpProxyServer(
         if (!value.startsWith("Basic ", ignoreCase = true)) return false
         
         return try {
-            val decodedBytes = try {
+            val decodedBytes = (try {
                 android.util.Base64.decode(value.substring(6), android.util.Base64.DEFAULT)
             } catch (_: Throwable) {
-                java.util.Base64.getDecoder().decode(value.substring(6))
-            }
+                null
+            }) ?: java.util.Base64.getDecoder().decode(value.substring(6))
             val decoded = String(decodedBytes, Charsets.UTF_8)
             val colonIndex = decoded.indexOf(':')
             if (colonIndex < 0) return false
@@ -521,7 +521,7 @@ class HttpProxyServer(
         }
     }
     
-    private fun readHttpHeaders(input: InputStream): ByteArray? {
+    internal fun readHttpHeaders(input: InputStream): ByteArray? {
         val buffer = ByteArray(MAX_HEADER_SIZE)
         var offset = 0
         val deadline = System.currentTimeMillis() + PRE_AUTH_TIMEOUT_MS

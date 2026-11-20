@@ -3,8 +3,7 @@ package com.eliyardo.omnia.profile
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import androidx.security.crypto.EncryptedFile
-import androidx.security.crypto.MasterKey
+import com.eliyardo.omnia.security.KeystoreHelper
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -145,12 +144,7 @@ class ProfileManager(private val context: Context) {
 
     private val parser = OvpnParser()
     private val profilesDir = File(context.filesDir, PROFILES_DIR)
-
-    private val masterKey by lazy {
-        MasterKey.Builder(context)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-    }
+    private val profileMagic = byteArrayOf(0x4F, 0x4D, 0x4E, 0x49, 0x41, 0x5F, 0x45, 0x4E, 0x43, 0x01) // "OMNIA_ENC\u0001"
 
     private val _profiles = MutableStateFlow<List<OvpnProfile>>(emptyList())
     val profiles: StateFlow<List<OvpnProfile>> = _profiles.asStateFlow()
@@ -360,20 +354,21 @@ class ProfileManager(private val context: Context) {
         }
 
         try {
-            // AndroidX EncryptedFile binds mFile.getName() as AAD into the streaming AEAD ciphertext.
-            // By staging the file in .staging/$id.ovpn, mFile.getName() is identical to the target ($id.ovpn),
-            // preserving AES-GCM authentication when atomically moved into profilesDir/$id.ovpn (Claude N1).
-            val encryptedFile = EncryptedFile.Builder(
-                context,
-                stagingFile,
-                masterKey,
-                EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
-            ).build()
+            val plainBytes = content.toByteArray(Charsets.UTF_8)
+            // Bind profile ID as AAD into AES-256-GCM ciphertext to prevent profile swapping attacks
+            val aad = id.toByteArray(Charsets.UTF_8)
+            val encryptedBytes = KeystoreHelper.encryptBytes(
+                plainBytes = plainBytes,
+                aad = aad,
+                alias = KeystoreHelper.KEY_ALIAS_PROFILES
+            )
 
-            encryptedFile.openFileOutput().use { output ->
-                output.write(content.toByteArray(Charsets.UTF_8))
+            FileOutputStream(stagingFile).use { output ->
+                output.write(profileMagic)
+                output.write(encryptedBytes)
+                output.flush()
                 try {
-                    (output as? FileOutputStream)?.fd?.sync()
+                    output.fd?.sync()
                 } catch (_: Exception) {}
             }
 
@@ -399,18 +394,50 @@ class ProfileManager(private val context: Context) {
         if (!file.exists()) return null
 
         return try {
-            val encryptedFile = EncryptedFile.Builder(
-                context,
-                file,
-                masterKey,
-                EncryptedFile.FileEncryptionScheme.AES256_GCM_HKDF_4KB
-            ).build()
+            val fileBytes = file.readBytes()
+            if (fileBytes.isEmpty()) return null
 
-            encryptedFile.openFileInput().use { input ->
-                input.bufferedReader().readText()
+            val hasMagic = fileBytes.size >= profileMagic.size &&
+                fileBytes.take(profileMagic.size).toByteArray().contentEquals(profileMagic)
+
+            if (hasMagic) {
+                val encrypted = fileBytes.copyOfRange(profileMagic.size, fileBytes.size)
+                val aad = id.toByteArray(Charsets.UTF_8)
+                when (val res = KeystoreHelper.decryptBytesWithResult(encrypted, aad, KeystoreHelper.KEY_ALIAS_PROFILES)) {
+                    is KeystoreHelper.DecryptionBytesResult.Success -> {
+                        String(res.decryptedBytes, Charsets.UTF_8)
+                    }
+                    is KeystoreHelper.DecryptionBytesResult.KeyInvalidated -> {
+                        Log.e(TAG, "Keystore key for profiles was permanently invalidated")
+                        null
+                    }
+                    is KeystoreHelper.DecryptionBytesResult.TagMismatch -> {
+                        Log.w(TAG, "Integrity check failed (tag mismatch) for profile $id")
+                        null
+                    }
+                    else -> {
+                        Log.w(TAG, "Decryption failed for profile $id")
+                        null
+                    }
+                }
+            } else {
+                // Check if file is plaintext (e.g. migration from legacy plain file or raw drop)
+                val text = String(fileBytes, Charsets.UTF_8)
+                if (text.startsWith("client") || text.startsWith("#") || text.startsWith("dev ") || text.startsWith("remote ")) {
+                    // Transparently migrate to secure direct Keystore AES-256-GCM format
+                    try {
+                        writeEncryptedProfile(id, text)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not migrate plaintext profile $id to encrypted format", e)
+                    }
+                    text
+                } else {
+                    Log.w(TAG, "Unrecognized or legacy encrypted profile format for $id")
+                    null
+                }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Decryption failed for profile $id", e)
+            Log.e(TAG, "Failed reading profile $id", e)
             null
         }
     }

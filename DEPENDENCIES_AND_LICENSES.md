@@ -24,7 +24,7 @@ This document lists all direct and transitive third-party libraries, native comp
 - **Asio**: Distributed under the Boost Software License, Version 1.0. Copyright (c) 2003-2023 Christopher M. Kohlhoff.
 - **{fmt}**: Distributed under the MIT license. Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors.
 - **LZ4**: Library (`lib/`) licensed under the BSD 2-Clause License. Copyright (c) 2011-2020, Yann Collet.
-- **OpenSSL & KDAB**: Licensed under the Apache License 2.0. Copyright (c) 1998-2023 The OpenSSL Project Authors. Copyright (c) 2013-2023 Klarälvdalens Datakonsult AB (KDAB).
+- **OpenSSL & KDAB**: Licensed under the Apache License 2.0. Copyright (c) 1998-2023 The OpenSSL Project Authors. Copyright (c) 2013-2023 Klarälvdalens Datakonsult AB (KDAB). All 24 prebuilt binaries are cryptographically pinned with SHA-256 digests in `app/src/main/cpp/OPENSSL_CHECKSUMS.sha256` and automatically verified in CI.
 
 ---
 
@@ -41,7 +41,6 @@ This document lists all direct and transitive third-party libraries, native comp
 | `androidx.compose.material3:material3` | BOM | Material 3 UI design system | Apache-2.0 |
 | `androidx.compose.material:material-icons-extended` | BOM | Extended Material Design icons | Apache-2.0 |
 | `androidx.datastore:datastore-preferences` | 1.1.1 | Reactive key-value configuration storage | Apache-2.0 |
-| `androidx.security:security-crypto` | 1.1.0-alpha06 | Android Keystore backed `EncryptedFile` and `MasterKey` | Apache-2.0 |
 | `org.jetbrains.kotlinx:kotlinx-coroutines-android` | 1.9.0 | Asynchronous networking, coroutines runtime | Apache-2.0 |
 
 ---

@@ -14,14 +14,8 @@
 # Keep profile data classes
 -keep class com.eliyardo.omnia.profile.** { *; }
 
-# Keep AndroidX Security Crypto and Tink
--keep class androidx.security.crypto.** { *; }
--keep class com.google.crypto.tink.** { *; }
--dontwarn com.google.crypto.tink.**
--dontwarn com.google.errorprone.annotations.**
--dontwarn javax.annotation.**
--dontwarn javax.annotation.concurrent.**
--dontwarn org.checkerframework.**
+# Keep security helper
+-keep class com.eliyardo.omnia.security.** { *; }
 
 # Keep Coroutines and Flow
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory { *; }
