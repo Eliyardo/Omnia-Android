@@ -5,6 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [1.2.0] - 2026-11-21
+
+### Major Architecture & Quality Milestone
+- **Direct Keystore File Encryption**: Dropped deprecated `androidx.security:security-crypto:1.1.0-alpha06` and Google Tink dependencies entirely. Implemented direct Android KeyStore AES-256-GCM encryption with profile UUID bound as AAD into AEAD ciphertext, preventing ciphertext swapping and file tampering.
+- **Supply-Chain & Prebuilts Verification**: Published cryptographically pinned SHA-256 digests for all 24 OpenSSL `.so`/`.a` prebuilt binaries in `app/src/main/cpp/OPENSSL_CHECKSUMS.sha256` with automated validation in CI workflows.
+- **Automated Fuzzing Test Suites**: Added automated stress and fuzz testing covering 500+ randomized iterations for OpenVPN parser (`OvpnParserFuzzTest`), SOCKS5 protocol handshake/subnegotiation (`Socks5ProtocolFuzzTest`), and HTTP CONNECT proxy headers (`HttpProxyProtocolFuzzTest`).
+- **Codebase Modularization**: Decomposed massive monolithic UI and service files into focused, maintainable modules (`MainComponents.kt`, `MainDialogs.kt`, `SettingsComponents.kt`, `ConnectionSessionHolder.kt`, `VpnNotificationHelper.kt`, `VpnNetworkUtils.kt`).
+- **Enhanced Keystore Diagnostics**: Added typed `DecryptionResult` and `DecryptionBytesResult` sealed classes to `KeystoreHelper.kt` with granular error diagnostics (`KeyPermanentlyInvalidatedException`, `AEADBadTagException`, etc.).
+- **CI Static Analysis & Dependabot**: Integrated weekly Dependabot tracking for Gradle and Actions, and added automated Android Lint verification to CI.
+- **Project Documentation**: Added formal `THREAT_MODEL.md`, `CONTRIBUTING.md`, and complete `CHANGELOG.md`.
+
+---
+
 ## [1.1.9] - 2026-10-30
 
 ### Security & Concurrency Hardening

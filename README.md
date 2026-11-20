@@ -163,10 +163,10 @@ cd Omnia-Android
 ```
 
 Release APKs are output to `app/build/outputs/apk/release/`:
-- `Omnia-1.1.9-arm64-v8a-release.apk`
-- `Omnia-1.1.9-armeabi-v7a-release.apk`
-- `Omnia-1.1.9-x86_64-release.apk`
-- `Omnia-1.1.9-universal-release.apk`
+- `Omnia-1.2.0-arm64-v8a-release.apk`
+- `Omnia-1.2.0-armeabi-v7a-release.apk`
+- `Omnia-1.2.0-x86_64-release.apk`
+- `Omnia-1.2.0-universal-release.apk`
 
 ---
 
